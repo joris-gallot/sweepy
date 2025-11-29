@@ -359,23 +359,16 @@ mod tests {
 
     sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
 
-    // convert to &str map for ProjectAnalyzer
     let sources_ref: HashMap<PathBuf, &str> =
       sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
 
-    // create analyzer
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-
-    // entrypoint is index.ts
     let entrypoints = vec![PathBuf::from("./index.ts")];
-
-    // compute reachable files
     let reachable = analyzer.compute_reachable(&entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("./index.ts")));
     assert!(!reachable.contains(&PathBuf::from("./exports-named.ts")));
 
-    // check unused exports
     let unused_exports = analyzer.find_unused_exports();
     assert_eq!(
       unused_exports,
@@ -448,23 +441,16 @@ mod tests {
 
     sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
 
-    // convert to &str map for ProjectAnalyzer
     let sources_ref: HashMap<PathBuf, &str> =
       sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
 
-    // create analyzer
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-
-    // entrypoint is index.ts
     let entrypoints = vec![PathBuf::from("./index.ts")];
-
-    // compute reachable files
     let reachable = analyzer.compute_reachable(&entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("./index.ts")));
     assert!(reachable.contains(&PathBuf::from("./exports-named.ts")));
 
-    // check unused exports
     let unused_exports = analyzer.find_unused_exports();
     assert_eq!(
       unused_exports,
