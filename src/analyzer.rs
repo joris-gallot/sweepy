@@ -434,7 +434,7 @@ mod tests {
     sources.insert(
       PathBuf::from("./index.ts"),
       r#"
-        import { foo, bar } from "./exports-named";
+        import { foo, bar, type MyInterface } from "./exports-named";
         console.log("Hello World");
       "#,
     );
@@ -461,10 +461,6 @@ mod tests {
           "MyAbstractClass".to_string()
         ),
         (PathBuf::from("./exports-named.ts"), "MyEnum".to_string()),
-        (
-          PathBuf::from("./exports-named.ts"),
-          "MyInterface".to_string()
-        ),
         (
           PathBuf::from("./exports-named.ts"),
           "MyNamespace".to_string()
