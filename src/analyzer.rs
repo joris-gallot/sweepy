@@ -203,6 +203,18 @@ fn extract_imports_exports(path: &Path, program: &Program) -> ParsedFile {
         } else {
           if let Some(decl) = &export.declaration {
             match decl {
+              Declaration::TSInterfaceDeclaration(int) => {
+                exports.push(int.id.name.to_string());
+              }
+              Declaration::TSTypeAliasDeclaration(ta) => {
+                exports.push(ta.id.name.to_string());
+              }
+              Declaration::TSEnumDeclaration(en) => {
+                exports.push(en.id.name.to_string());
+              }
+              Declaration::TSModuleDeclaration(md) => {
+                exports.push(md.id.name().to_string());
+              }
               Declaration::FunctionDeclaration(fd) => {
                 if let Some(id) = &fd.id {
                   exports.push(id.name.to_string());
@@ -341,8 +353,8 @@ mod tests {
     sources.insert(
       PathBuf::from("./index.ts"),
       r#"
-            console.log("Hello World");
-        "#,
+        console.log("Hello World");
+      "#,
     );
 
     sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
@@ -373,6 +385,16 @@ mod tests {
           PathBuf::from("./exports-named.ts"),
           "MyAbstractClass".to_string()
         ),
+        (PathBuf::from("./exports-named.ts"), "MyEnum".to_string()),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "MyInterface".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "MyNamespace".to_string()
+        ),
+        (PathBuf::from("./exports-named.ts"), "MyType".to_string()),
         (PathBuf::from("./exports-named.ts"), "bar".to_string()),
         (PathBuf::from("./exports-named.ts"), "foo".to_string()),
         (
@@ -419,9 +441,9 @@ mod tests {
     sources.insert(
       PathBuf::from("./index.ts"),
       r#"
-            import { foo, bar } from "./exports-named";
-            console.log("Hello World");
-        "#,
+        import { foo, bar } from "./exports-named";
+        console.log("Hello World");
+      "#,
     );
 
     sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
@@ -452,6 +474,16 @@ mod tests {
           PathBuf::from("./exports-named.ts"),
           "MyAbstractClass".to_string()
         ),
+        (PathBuf::from("./exports-named.ts"), "MyEnum".to_string()),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "MyInterface".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "MyNamespace".to_string()
+        ),
+        (PathBuf::from("./exports-named.ts"), "MyType".to_string()),
         (
           PathBuf::from("./exports-named.ts"),
           "myArrowFunction".to_string()
