@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 #[derive(Parser, Debug)]
-#[command(name = "kniprs-lite")]
+#[command(name = "sweepy")]
 struct Args {
   #[arg(short, long, default_value = ".")]
   root: PathBuf,
