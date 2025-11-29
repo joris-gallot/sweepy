@@ -428,7 +428,7 @@ mod tests {
   }
 
   #[test]
-  fn test_used_exports_named() {
+  fn test_import_exports_named() {
     let mut sources = HashMap::new();
 
     sources.insert(
@@ -505,5 +505,33 @@ mod tests {
         ),
       ]
     );
+  }
+
+  #[test]
+  fn test_import_all_exports_named() {
+    let mut sources = HashMap::new();
+
+    sources.insert(
+      PathBuf::from("./index.ts"),
+      r#"
+        import * as exportsNamed from "./exports-named";
+        console.log("Hello World");
+      "#,
+    );
+
+    sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
+
+    let sources_ref: HashMap<PathBuf, &str> =
+      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+
+    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+    let entrypoints = vec![PathBuf::from("./index.ts")];
+    let reachable = analyzer.compute_reachable(&entrypoints);
+
+    assert!(reachable.contains(&PathBuf::from("./index.ts")));
+    assert!(reachable.contains(&PathBuf::from("./exports-named.ts")));
+
+    let unused_exports = analyzer.find_unused_exports();
+    assert_eq!(unused_exports, vec![]);
   }
 }
