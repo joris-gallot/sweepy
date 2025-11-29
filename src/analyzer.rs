@@ -435,6 +435,7 @@ mod tests {
       PathBuf::from("./index.ts"),
       r#"
         import { foo, bar, type MyInterface } from "./exports-named";
+        import type { MyType } from "./exports-named";
         console.log("Hello World");
       "#,
     );
@@ -465,7 +466,6 @@ mod tests {
           PathBuf::from("./exports-named.ts"),
           "MyNamespace".to_string()
         ),
-        (PathBuf::from("./exports-named.ts"), "MyType".to_string()),
         (
           PathBuf::from("./exports-named.ts"),
           "myArrowFunction".to_string()
