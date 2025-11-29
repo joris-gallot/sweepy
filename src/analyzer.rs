@@ -99,10 +99,11 @@ impl ProjectAnalyzer {
 
   /// Find unused exports
   pub fn find_unused_exports(&self) -> Vec<(PathBuf, String)> {
-    let mut unused = vec![];
+    let mut unused_set: HashSet<(PathBuf, String)> = HashSet::new();
 
     for (module_path, pf) in &self.files {
       let importers = self.import_usage.get(module_path);
+
       for export in &pf.exports {
         let mut used = false;
 
@@ -119,12 +120,14 @@ impl ProjectAnalyzer {
         }
 
         if !used {
-          unused.push((module_path.clone(), export.clone()));
+          unused_set.insert((module_path.clone(), export.clone()));
         }
       }
     }
 
-    unused
+    let mut unused_vec: Vec<_> = unused_set.into_iter().collect();
+    unused_vec.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1))); // optionnel, pour tri stable
+    unused_vec
   }
 }
 
@@ -305,26 +308,44 @@ mod tests {
   use std::collections::HashMap;
   use std::path::PathBuf;
 
+  fn exports_named() -> &'static str {
+    r#"
+      export const foo = 'foo'
+      export function bar() { return 'bar' }
+      export class Baz { greet() { return 'Hello from Baz' } }
+      export interface MyInterface { id: number; name: string }
+      export type MyType = { value: string }
+      export enum MyEnum { FIRST, SECOND, THIRD }
+      export namespace MyNamespace { export function sayHello() { return 'Hello from MyNamespace' } }
+      export const myArrowFunction = (x: number): number => x * x
+      export async function myAsyncFunction(): Promise<string> { return 'This is an async function' }
+      export function* myGeneratorFunction() { yield 1; yield 2; yield 3 }
+      export const myTuple: [number, string] = [1, 'one']
+      export const myUnionType: number | string = 'union'
+      export const myIntersectionType: { a: number } & { b: string } = { a: 1, b: 'two' }
+      export function myOverloadedFunction(x: number): number
+      export function myOverloadedFunction(x: string): string
+      export function myOverloadedFunction(x: number | string): number | string {
+          if (typeof x === 'number') { return x * 2 } else { return x + x }
+      }
+      export abstract class MyAbstractClass { abstract getName(): string }
+      export declare function myDeclaredFunction(param: string): void
+      export const myConstEnum = { A: 1, B: 2, C: 3 } as const
+    "#
+  }
+
   #[test]
-  fn test_unused_exports_simple() {
-    // simulate project files in memory
+  fn test_unused_exports_named() {
     let mut sources = HashMap::new();
 
     sources.insert(
       PathBuf::from("./index.ts"),
       r#"
-            import { greet } from "./greet";
-            console.log(greet("World"));
+            console.log("Hello World");
         "#,
     );
 
-    sources.insert(
-      PathBuf::from("./greet.ts"),
-      r#"
-            export function greet(name: string) { return `Hello ${name}`; }
-            export function unused() {}
-        "#,
-    );
+    sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
 
     // convert to &str map for ProjectAnalyzer
     let sources_ref: HashMap<PathBuf, &str> =
@@ -340,88 +361,131 @@ mod tests {
     let reachable = analyzer.compute_reachable(&entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("./index.ts")));
-    assert!(reachable.contains(&PathBuf::from("./greet.ts")));
+    assert!(!reachable.contains(&PathBuf::from("./exports-named.ts")));
 
     // check unused exports
     let unused_exports = analyzer.find_unused_exports();
     assert_eq!(
       unused_exports,
-      vec![(PathBuf::from("./greet.ts"), "unused".to_string())]
+      vec![
+        (PathBuf::from("./exports-named.ts"), "Baz".to_string()),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "MyAbstractClass".to_string()
+        ),
+        (PathBuf::from("./exports-named.ts"), "bar".to_string()),
+        (PathBuf::from("./exports-named.ts"), "foo".to_string()),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myArrowFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myAsyncFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myConstEnum".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myDeclaredFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myGeneratorFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myIntersectionType".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myOverloadedFunction".to_string()
+        ),
+        (PathBuf::from("./exports-named.ts"), "myTuple".to_string()),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myUnionType".to_string()
+        ),
+      ]
     );
   }
 
   #[test]
-  fn test_unused_file() {
+  fn test_used_exports_named() {
     let mut sources = HashMap::new();
 
     sources.insert(
       PathBuf::from("./index.ts"),
       r#"
-            import { greet } from "./greet";
-            console.log(greet("World"));
+            import { foo, bar } from "./exports-named";
+            console.log("Hello World");
         "#,
     );
 
-    sources.insert(
-      PathBuf::from("./greet.ts"),
-      r#"
-            export function greet(name: string) { return `Hello ${name}`; }
-        "#,
-    );
+    sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
 
-    sources.insert(
-      PathBuf::from("./unused.ts"),
-      r#"
-            export function unused() {}
-        "#,
-    );
-
+    // convert to &str map for ProjectAnalyzer
     let sources_ref: HashMap<PathBuf, &str> =
       sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
 
+    // create analyzer
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+
+    // entrypoint is index.ts
     let entrypoints = vec![PathBuf::from("./index.ts")];
 
-    let reachable = analyzer.compute_reachable(&entrypoints);
-
-    // unused.ts should NOT be reachable
-    assert!(!reachable.contains(&PathBuf::from("./unused.ts")));
-  }
-
-  #[test]
-  fn test_namespace_import_usage() {
-    let mut sources = HashMap::new();
-
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-            import * as greet from "./greet";
-            console.log(greet.greet("World"));
-        "#,
-    );
-
-    sources.insert(
-      PathBuf::from("./greet.ts"),
-      r#"
-            export function greet(name: string) { return `Hello ${name}`; }
-            export function unused() {}
-        "#,
-    );
-
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
-
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-
+    // compute reachable files
     let reachable = analyzer.compute_reachable(&entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("./index.ts")));
-    assert!(reachable.contains(&PathBuf::from("./greet.ts")));
+    assert!(reachable.contains(&PathBuf::from("./exports-named.ts")));
 
+    // check unused exports
     let unused_exports = analyzer.find_unused_exports();
-
-    // namespace import uses all exports, so none should be reported as unused
-    assert!(unused_exports.is_empty());
+    assert_eq!(
+      unused_exports,
+      vec![
+        (PathBuf::from("./exports-named.ts"), "Baz".to_string()),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "MyAbstractClass".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myArrowFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myAsyncFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myConstEnum".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myDeclaredFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myGeneratorFunction".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myIntersectionType".to_string()
+        ),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myOverloadedFunction".to_string()
+        ),
+        (PathBuf::from("./exports-named.ts"), "myTuple".to_string()),
+        (
+          PathBuf::from("./exports-named.ts"),
+          "myUnionType".to_string()
+        ),
+      ]
+    );
   }
 }

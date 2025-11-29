@@ -1,3 +1,2 @@
-import { greet } from "./greet";
-
-console.log(greet("World"));
+import {foo} from "./export-default";
+import * as all from "./export-all";
