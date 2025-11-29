@@ -65,7 +65,6 @@ fn main() -> Result<()> {
   Ok(())
 }
 
-/// Find reasonable default entrypoints inside project root using file_set
 fn find_default_entrypoints(root: &Path, file_set: &HashSet<PathBuf>) -> Vec<PathBuf> {
   let candidates = vec![
     root.join("src").join("index.ts"),
