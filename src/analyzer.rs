@@ -9,14 +9,14 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
 pub struct ImportInfo {
-  pub source: String,          // module specifier as written: "./greet"
+  pub source: String,          // module specifier as written: "./foo"
   pub specifiers: Vec<String>, // imported names; empty => likely a side-effect import or `import * as ns`
   pub has_namespace: bool,     // true if `import * as ns from ...`
   pub has_default: bool,       // true if `import def from ...`
 }
 
 #[derive(Debug, Clone)]
-struct ExportInfo {
+pub struct ExportInfo {
   pub name: String,
   pub source: Option<PathBuf>,
 }
@@ -29,7 +29,6 @@ pub enum ExportItem {
 
 #[derive(Debug, Clone)]
 pub struct ParsedFile {
-  pub path: PathBuf,
   pub imports: Vec<ImportInfo>,
   pub exports: Vec<ExportItem>,
 }
@@ -407,11 +406,7 @@ fn extract_imports_exports(path: &Path, program: &Program) -> ParsedFile {
     }
   }
 
-  ParsedFile {
-    path: path.to_path_buf(),
-    imports,
-    exports,
-  }
+  ParsedFile { imports, exports }
 }
 
 /// Check if a module specifier is relative
