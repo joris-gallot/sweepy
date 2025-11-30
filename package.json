@@ -1,0 +1,87 @@
+{
+  "name": "@sweepy/core",
+  "version": "0.0.1",
+  "description": "Find and remove unused exports in JS/TS projects",
+  "main": "index.js",
+  "packageManager": "pnpm@10.22.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/joris-gallot/sweepy.git"
+  },
+  "license": "MIT",
+  "browser": "browser.js",
+  "keywords": ["typescript", "javascript", "unused", "exports", "imports", "analyzer", "tree-shaking"],
+  "files": [
+    "index.d.ts",
+    "index.js",
+    "browser.js"
+  ],
+  "napi": {
+    "binaryName": "sweepy",
+    "targets": [
+      "x86_64-pc-windows-msvc",
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu",
+      "x86_64-unknown-linux-musl",
+      "aarch64-unknown-linux-gnu",
+      "i686-pc-windows-msvc",
+      "armv7-unknown-linux-gnueabihf",
+      "aarch64-apple-darwin",
+      "aarch64-linux-android",
+      "x86_64-unknown-freebsd",
+      "aarch64-unknown-linux-musl",
+      "aarch64-pc-windows-msvc",
+      "armv7-linux-androideabi",
+      "wasm32-wasip1-threads"
+    ]
+  },
+  "engines": {
+    "node": ">= 24.0.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org/",
+    "access": "public"
+  },
+  "scripts": {
+    "artifacts": "napi artifacts",
+    "bench": "node --import @oxc-node/core/register benchmark/bench.ts",
+    "build": "napi build --platform --release",
+    "build:debug": "napi build --platform",
+    "format": "run-p format:rs format:toml",
+    "format:toml": "taplo format",
+    "format:rs": "cargo fmt",
+    "lint": "oxlint .",
+    "prepublishOnly": "napi prepublish -t npm",
+    "test": "ava",
+    "preversion": "napi build --platform && git add .",
+    "version": "napi version"
+  },
+  "devDependencies": {
+    "@emnapi/core": "^1.5.0",
+    "@emnapi/runtime": "^1.5.0",
+    "@napi-rs/cli": "^3.2.0",
+    "@oxc-node/core": "^0.0.34",
+    "@taplo/cli": "^0.7.0",
+    "@tybys/wasm-util": "^0.10.0",
+    "ava": "^6.4.1",
+    "chalk": "^5.6.2",
+    "npm-run-all2": "^8.0.4",
+    "oxlint": "^1.14.0",
+    "tinybench": "^5.0.1",
+    "typescript": "^5.9.2"
+  },
+  "ava": {
+    "extensions": {
+      "ts": "module"
+    },
+    "timeout": "2m",
+    "workerThreads": false,
+    "environmentVariables": {
+      "OXC_TSCONFIG_PATH": "./__test__/tsconfig.json"
+    },
+    "nodeArguments": [
+      "--import",
+      "@oxc-node/core/register"
+    ]
+  }
+}
