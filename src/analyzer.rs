@@ -251,7 +251,7 @@ fn parse_module_from_path(path: &Path, source: &str) -> Result<ParsedFile> {
   }
 
   let program = parsed.program;
-  let pf = extract_imports_exports(path, &program);
+  let pf = extract_imports_exports(&program);
   Ok(pf)
 }
 
@@ -259,7 +259,7 @@ fn normalize_soft(path: &Path) -> PathBuf {
   PathBuf::from(path).clean()
 }
 
-fn extract_imports_exports(path: &Path, program: &Program) -> ParsedFile {
+fn extract_imports_exports(program: &Program) -> ParsedFile {
   let mut imports: Vec<ImportInfo> = Vec::new();
   let mut exports: Vec<ExportItem> = Vec::new();
 
