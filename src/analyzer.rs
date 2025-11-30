@@ -127,44 +127,67 @@ impl ProjectAnalyzer {
   pub fn find_unused_exports(&self) -> Vec<(PathBuf, String)> {
     let file_set: HashSet<PathBuf> = self.files.keys().cloned().collect();
     let mut unused_set: HashSet<(PathBuf, String)> = HashSet::new();
-    let mut reexported_by: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
 
     for (module_path, pf) in &self.files {
-      for export in &pf.exports {
-        if let ExportItem::All(target) = export
-          && let Some(target_pf_path) =
-            resolve_relative_import_from_set(&target.to_string_lossy(), &file_set)
-        {
-          reexported_by
-            .entry(target_pf_path)
-            .or_default()
-            .push(module_path.clone());
-        }
-      }
-    }
-
-    for (module_path, pf) in &self.files {
-      let is_module_used = if let Some(importers) = reexported_by.get(module_path) {
-        importers.iter().any(|importer_path| {
-          if let Some(importer_imports) = self.import_usage.get(importer_path) {
-            importer_imports
-              .iter()
-              .any(|(imp_path, imp_info)| imp_info.has_namespace)
-          } else {
-            false
-          }
-        })
-      } else {
-        false
-      };
-
       for export in &pf.exports {
         if let ExportItem::Named(exp) = export {
           let mut used = false;
 
-          // If the module is used via export * → all its exports are used
-          if is_module_used {
-            continue;
+          let mut reexporters: Vec<PathBuf> = Vec::new();
+
+          for (other_module_path, other_pf) in &self.files {
+            if other_module_path != module_path {
+              for other_export in &other_pf.exports {
+                let has_named_reexport = if let ExportItem::Named(other_exp) = other_export {
+                  if let Some(src) = &other_exp.source {
+                    if let Some(spec) = src.to_str()
+                      && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+                      && &target == module_path
+                      && other_exp.name == exp.name
+                    {
+                      true
+                    } else {
+                      false
+                    }
+                  } else {
+                    false
+                  }
+                } else {
+                  false
+                };
+
+                let has_all_reexport = if let ExportItem::All(specifier_path) = other_export
+                  && let Some(spec) = specifier_path.to_str()
+                  && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+                  && &target == module_path
+                {
+                  true
+                } else {
+                  false
+                };
+
+                if has_named_reexport || has_all_reexport {
+                  reexporters.push(other_module_path.clone());
+                }
+              }
+            }
+          }
+
+          for reexporter_path in reexporters {
+            if let Some(importers) = self.import_usage.get(&reexporter_path) {
+              for (_importer_path, import_info) in importers {
+                if import_info.has_namespace
+                  || (exp.name == "default" && import_info.has_default)
+                  || import_info.specifiers.iter().any(|s| s == &exp.name)
+                {
+                  used = true;
+                  break;
+                }
+              }
+            }
+            if used {
+              break;
+            }
           }
 
           if let Some(importers) = self.import_usage.get(module_path) {
@@ -686,6 +709,125 @@ mod tests {
 
     let unused_exports = analyzer.find_unused_exports();
     assert_eq!(unused_exports, vec![]);
+  }
+
+  #[test]
+  fn test_import_some_exports_all() {
+    let mut sources = HashMap::new();
+
+    sources.insert(
+      PathBuf::from("./index.ts"),
+      r#"
+        import { foo, extra } from "./exports-all";
+        console.log("Hello World");
+      "#,
+    );
+
+    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./exports-all.ts"),
+      r#"
+        export * from './exports-named'
+        export const extra = 'extra'
+      "#,
+    );
+
+    let sources_ref: HashMap<PathBuf, &str> =
+      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+
+    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+    let entrypoints = vec![PathBuf::from("./index.ts")];
+    let reachable = analyzer.compute_reachable(&entrypoints);
+
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
+
+    let unused_exports = analyzer.find_unused_exports();
+    assert_eq!(
+      unused_exports,
+      vec![
+        (PathBuf::from("exports-named.ts"), "Baz".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "MyAbstractClass".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
+        (PathBuf::from("exports-named.ts"), "bar".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myArrowFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myAsyncFunction".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myDeclaredFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myGeneratorFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myIntersectionType".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myOverloadedFunction".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
+        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
+      ]
+    );
+  }
+
+  #[test]
+  fn test_import_some_exports_some() {
+    let mut sources = HashMap::new();
+
+    sources.insert(
+      PathBuf::from("./index.ts"),
+      r#"
+        import { foo, extra } from "./exports-all";
+        console.log("Hello World");
+      "#,
+    );
+
+    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./exports-all.ts"),
+      r#"
+        export { foo, bar, Baz } from './exports-named'
+        export const extra = 'extra'
+      "#,
+    );
+
+    let sources_ref: HashMap<PathBuf, &str> =
+      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+
+    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+    let entrypoints = vec![PathBuf::from("./index.ts")];
+    let reachable = analyzer.compute_reachable(&entrypoints);
+
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
+
+    let unused_exports = analyzer.find_unused_exports();
+    assert_eq!(
+      unused_exports,
+      vec![
+        (PathBuf::from("exports-named.ts"), "Baz".to_string()),
+        (PathBuf::from("exports-named.ts"), "bar".to_string()),
+      ]
+    );
   }
 
   #[test]
