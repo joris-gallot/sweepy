@@ -49,7 +49,13 @@ pub fn sweepy(_root: String, entries: Vec<String>) -> SweepyResult {
     .collect();
 
   let analyzer = ProjectAnalyzer::from_sources(&sources_ref).expect("Failed to analyze project");
-  let entrypoints: Vec<PathBuf> = entries.iter().map(PathBuf::from).collect();
+  let entrypoints: Vec<PathBuf> = entries
+    .iter()
+    .map(|e| {
+      let p = PathBuf::from(e);
+      p.strip_prefix(&root).unwrap_or(&p).to_path_buf()
+    })
+    .collect();
 
   let reachable = analyzer.compute_reachable(entrypoints);
   let unused_exports_raw = analyzer.find_unused_exports();
