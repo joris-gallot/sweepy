@@ -82,5 +82,12 @@
       "--import",
       "@oxc-node/core/register"
     ]
+  },
+  "pnpm": {
+    "supportedArchitectures": {
+      "os": ["darwin","linux","win32","current"],
+      "cpu": ["current", "arm64", "x64", "arm", "wasm32"],
+      "libc": ["current","musl","gnu"]
+    }
   }
 }
