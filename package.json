@@ -10,7 +10,7 @@
   },
   "license": "MIT",
   "browser": "browser.js",
-  "keywords": ["typescript", "javascript", "oxc", "napi", "unused", "exports", "imports", "analyzer", "tree-shaking"],
+  "keywords": ["typescript", "javascript", "oxc", "napi", "unused", "exports", "imports", "analyzer", "tree-shaking", "lint"],
   "files": [
     "index.d.ts",
     "index.js",
