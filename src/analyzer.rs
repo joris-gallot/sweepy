@@ -676,7 +676,7 @@ mod tests {
   }
 
   #[test]
-  fn test_import_exports_all() {
+  fn test_import_all_exports_all() {
     let mut sources = HashMap::new();
 
     sources.insert(
