@@ -54,7 +54,8 @@
     "prepublishOnly": "napi prepublish -t npm",
     "test": "ava",
     "preversion": "napi build --platform && git add .",
-    "version": "napi version"
+    "version": "napi version",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@emnapi/core": "^1.5.0",

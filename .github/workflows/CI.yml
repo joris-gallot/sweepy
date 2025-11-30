@@ -53,6 +53,26 @@ jobs:
       - name: Clippy
         run: cargo clippy
 
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - run: pnpm typecheck
+
   cargo-tests:
     name: Cargo Tests
     runs-on: ubuntu-latest
