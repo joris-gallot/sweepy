@@ -74,15 +74,38 @@ impl ProjectAnalyzer {
       }
 
       for export in &pf.exports {
-        if let ExportItem::All(specifier_path) = export
-          && let Some(spec) = specifier_path.to_str()
-          && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
-        {
-          graph
-            .entry(path.clone())
-            .or_default()
-            .insert(target.clone());
-        }
+        match export {
+          ExportItem::All(specifier_path) => {
+            if let Some(spec) = specifier_path.to_str()
+              && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+            {
+              graph
+                .entry(path.clone())
+                .or_default()
+                .insert(target.clone());
+              true
+            } else {
+              false
+            }
+          }
+          ExportItem::Named(exp) => {
+            if let Some(src) = &exp.source {
+              if let Some(spec) = src.to_str()
+                && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+              {
+                graph
+                  .entry(path.clone())
+                  .or_default()
+                  .insert(target.clone());
+                true
+              } else {
+                false
+              }
+            } else {
+              false
+            }
+          }
+        };
       }
     }
 
@@ -796,6 +819,22 @@ mod tests {
       PathBuf::from("./index.ts"),
       r#"
         import { foo, extra } from "./exports-all";
+        import {
+          MyAbstractClass,
+          MyEnum,
+          MyInterface,
+          MyNamespace,
+          MyType,
+          myArrowFunction,
+          myAsyncFunction,
+          myConstEnum,
+          myDeclaredFunction,
+          myGeneratorFunction,
+          myIntersectionType,
+          myOverloadedFunction,
+          myTuple,
+          myUnionType
+        } from "./exports-named"
         console.log("Hello World");
       "#,
     );
@@ -804,7 +843,7 @@ mod tests {
     sources.insert(
       PathBuf::from("./exports-all.ts"),
       r#"
-        export { foo, bar, Baz } from './exports-named'
+        export { foo, bar, Baz } from "./exports-named"
         export const extra = 'extra'
       "#,
     );
@@ -824,6 +863,8 @@ mod tests {
     assert_eq!(
       unused_exports,
       vec![
+        (PathBuf::from("exports-all.ts"), "Baz".to_string()),
+        (PathBuf::from("exports-all.ts"), "bar".to_string()),
         (PathBuf::from("exports-named.ts"), "Baz".to_string()),
         (PathBuf::from("exports-named.ts"), "bar".to_string()),
       ]
