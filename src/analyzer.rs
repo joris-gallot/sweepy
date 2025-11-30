@@ -948,82 +948,82 @@ mod tests {
     );
   }
 
-  // #[test]
-  // fn tessss() {
-  //   let mut sources = HashMap::new();
+  #[test]
+  fn test_some_import_with_unused_all_export() {
+    let mut sources = HashMap::new();
 
-  //   sources.insert(
-  //     PathBuf::from("./index.ts"),
-  //     r#"
-  //       import { foo } from "./exports-named";';
-  //       console.log("Hello World");
-  //     "#,
-  //   );
+    sources.insert(
+      PathBuf::from("./index.ts"),
+      r#"
+        import { foo } from "./exports-named";';
+        console.log("Hello World");
+      "#,
+    );
 
-  //   sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-  //   sources.insert(
-  //     PathBuf::from("./exports-all.ts"),
-  //     r#"
-  //       export * from './exports-named'
-  //       export const extra = 'extra'
-  //     "#,
-  //   );
+    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./exports-all.ts"),
+      r#"
+        export * from './exports-named'
+        export const extra = 'extra'
+      "#,
+    );
 
-  //   let sources_ref: HashMap<PathBuf, &str> =
-  //     sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+    let sources_ref: HashMap<PathBuf, &str> =
+      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
 
-  //   let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-  //   let entrypoints = vec![PathBuf::from("./index.ts")];
-  //   let reachable = analyzer.compute_reachable(entrypoints);
+    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+    let entrypoints = vec![PathBuf::from("./index.ts")];
+    let reachable = analyzer.compute_reachable(entrypoints);
 
-  //   assert!(reachable.contains(&PathBuf::from("index.ts")));
-  //   assert!(!reachable.contains(&PathBuf::from("./exports-all.ts")));
-  //   assert!(!reachable.contains(&PathBuf::from("exports-named.ts")));
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(!reachable.contains(&PathBuf::from("exports-all.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
 
-  //   let unused_exports = analyzer.find_unused_exports();
+    let unused_exports = analyzer.find_unused_exports();
 
-  //   assert_eq!(
-  //     unused_exports,
-  //     vec![
-  //       (PathBuf::from("./exports-all.ts"), "Baz".to_string()),
-  //       (
-  //         PathBuf::from("./exports-all.ts"),
-  //         "MyAbstractClass".to_string()
-  //       ),
-  //       (PathBuf::from("./exports-all.ts"), "MyEnum".to_string()),
-  //       (PathBuf::from("./exports-all.ts"), "MyInterface".to_string()),
-  //       (PathBuf::from("./exports-all.ts"), "MyNamespace".to_string()),
-  //       (PathBuf::from("./exports-all.ts"), "MyType".to_string()),
-  //       (PathBuf::from("./exports-all.ts"), "bar".to_string()),
-  //       (PathBuf::from("./exports-all.ts"), "extra".to_string()),
-  //       (
-  //         PathBuf::from("./exports-all.ts"),
-  //         "myArrowFunction".to_string()
-  //       ),
-  //       (
-  //         PathBuf::from("./exports-all.ts"),
-  //         "myAsyncFunction".to_string()
-  //       ),
-  //       (PathBuf::from("./exports-all.ts"), "myConstEnum".to_string()),
-  //       (
-  //         PathBuf::from("./exports-all.ts"),
-  //         "myDeclaredFunction".to_string()
-  //       ),
-  //       (
-  //         PathBuf::from("./exports-all.ts"),
-  //         "myGeneratorFunction".to_string()
-  //       ),
-  //       (
-  //         PathBuf::from("./exports-all.ts"),
-  //         "myIntersectionType".to_string()
-  //       ),
-  //       (
-  //         PathBuf::from("./exports-all.ts"),
-  //         "myOverloadedFunction".to_string()
-  //       ),
-  //       (PathBuf::from("./exports-all.ts"), "myTuple".to_string()),
-  //       (PathBuf::from("./exports-all.ts"), "myUnionType".to_string()),
-  //     ]
-  //   );
-  // }
+    assert_eq!(
+      unused_exports,
+      vec![
+        (PathBuf::from("exports-all.ts"), "extra".to_string()),
+        (PathBuf::from("exports-named.ts"), "Baz".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "MyAbstractClass".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
+        (PathBuf::from("exports-named.ts"), "bar".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myArrowFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myAsyncFunction".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myDeclaredFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myGeneratorFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myIntersectionType".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myOverloadedFunction".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
+        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
+      ]
+    );
+  }
 }
