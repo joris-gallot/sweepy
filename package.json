@@ -10,7 +10,7 @@
   },
   "license": "MIT",
   "browser": "browser.js",
-  "keywords": ["typescript", "javascript", "unused", "exports", "imports", "analyzer", "tree-shaking"],
+  "keywords": ["typescript", "javascript", "oxc", "napi", "unused", "exports", "imports", "analyzer", "tree-shaking"],
   "files": [
     "index.d.ts",
     "index.js",
@@ -36,7 +36,7 @@
     ]
   },
   "engines": {
-    "node": ">= 24.0.0"
+    "node": ">= 20.0.0"
   },
   "publishConfig": {
     "registry": "https://registry.npmjs.org/",
