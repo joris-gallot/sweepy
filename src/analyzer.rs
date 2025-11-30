@@ -3,10 +3,10 @@ use oxc_allocator::Allocator;
 use oxc_ast::ast::*;
 use oxc_parser::Parser as OxcParser;
 use oxc_span::SourceType;
+use path_clean::PathClean;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-/// Info about an import in a module
 #[derive(Debug, Clone)]
 pub struct ImportInfo {
   pub source: String,          // module specifier as written: "./greet"
@@ -15,15 +15,25 @@ pub struct ImportInfo {
   pub has_default: bool,       // true if `import def from ...`
 }
 
-/// Parsed file representation
+#[derive(Debug, Clone)]
+struct ExportInfo {
+  pub name: String,
+  pub source: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ExportItem {
+  Named(ExportInfo),
+  All(PathBuf),
+}
+
 #[derive(Debug, Clone)]
 pub struct ParsedFile {
   pub path: PathBuf,
   pub imports: Vec<ImportInfo>,
-  pub exports: Vec<String>,
+  pub exports: Vec<ExportItem>,
 }
 
-/// Analyzer struct
 pub struct ProjectAnalyzer {
   pub files: HashMap<PathBuf, ParsedFile>,
   pub graph: HashMap<PathBuf, HashSet<PathBuf>>,
@@ -32,23 +42,25 @@ pub struct ProjectAnalyzer {
 }
 
 impl ProjectAnalyzer {
-  /// Create ProjectAnalyzer from sources in memory
   pub fn from_sources(sources: &HashMap<PathBuf, &str>) -> Result<Self> {
     let mut files = HashMap::new();
 
     for (path, content) in sources {
-      let pf = parse_from_str(path, content)?;
-      files.insert(path.clone(), pf);
+      let clean = normalize_soft(path);
+      let pf = parse_module_from_path(&clean, content)?;
+
+      files.insert(clean, pf);
     }
 
     let file_set: HashSet<PathBuf> = files.keys().cloned().collect();
+
     let mut graph: HashMap<PathBuf, HashSet<PathBuf>> = HashMap::new();
     let mut import_usage: HashMap<PathBuf, Vec<(PathBuf, ImportInfo)>> = HashMap::new();
 
     for (path, pf) in &files {
       for imp in &pf.imports {
         if is_relative(&imp.source)
-          && let Some(target) = resolve_relative_import_from_set(path, &imp.source, &file_set)
+          && let Some(target) = resolve_relative_import_from_set(&imp.source, &file_set)
         {
           graph
             .entry(path.clone())
@@ -58,6 +70,18 @@ impl ProjectAnalyzer {
             .entry(target.clone())
             .or_default()
             .push((path.clone(), imp.clone()));
+        }
+      }
+
+      for export in &pf.exports {
+        if let ExportItem::All(specifier_path) = export
+          && let Some(spec) = specifier_path.to_str()
+          && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+        {
+          graph
+            .entry(path.clone())
+            .or_default()
+            .insert(target.clone());
         }
       }
     }
@@ -71,13 +95,16 @@ impl ProjectAnalyzer {
   }
 
   /// Compute reachable files from entrypoints
-  pub fn compute_reachable(&self, entrypoints: &[PathBuf]) -> HashSet<PathBuf> {
+  pub fn compute_reachable(&self, entrypoints: &Vec<PathBuf>) -> HashSet<PathBuf> {
     let file_set: HashSet<PathBuf> = self.files.keys().cloned().collect();
     let mut visited = HashSet::new();
     let mut stack = Vec::new();
 
-    for ep in entrypoints {
-      if file_set.contains(ep) {
+    let normalized_entrypoints: Vec<PathBuf> =
+      entrypoints.iter().map(|ep| normalize_soft(ep)).collect();
+
+    for ep in normalized_entrypoints {
+      if file_set.contains(&ep) {
         visited.insert(ep.clone());
         stack.push(ep.clone());
       }
@@ -97,42 +124,61 @@ impl ProjectAnalyzer {
     visited
   }
 
-  /// Find unused exports
   pub fn find_unused_exports(&self) -> Vec<(PathBuf, String)> {
     let mut unused_set: HashSet<(PathBuf, String)> = HashSet::new();
+    let file_set: HashSet<PathBuf> = self.files.keys().cloned().collect();
+    let mut module_used_by_reexport_all: Vec<PathBuf> = Vec::new();
 
     for (module_path, pf) in &self.files {
-      let importers = self.import_usage.get(module_path);
+      for export in &pf.exports {
+        if let ExportItem::All(target) = export
+          && let Some(target_pf_path) =
+            resolve_relative_import_from_set(&target.to_string_lossy(), &file_set)
+        {
+          module_used_by_reexport_all.push(target_pf_path);
+        }
+      }
+    }
+
+    for (module_path, pf) in &self.files {
+      let is_module_used = module_used_by_reexport_all.contains(module_path);
 
       for export in &pf.exports {
-        let mut used = false;
+        if let ExportItem::Named(exp) = export {
+          let mut used = false;
 
-        if let Some(importers) = importers {
-          for (_importer_path, import_info) in importers {
-            if import_info.has_namespace
-              || (export == "default" && import_info.has_default)
-              || import_info.specifiers.iter().any(|s| s == export)
-            {
-              used = true;
-              break;
+          // If the module is used via export * → all its exports are used
+          if is_module_used {
+            continue;
+          }
+
+          if let Some(importers) = self.import_usage.get(module_path) {
+            for (_importer_path, import_info) in importers {
+              if import_info.has_namespace
+                || (exp.name == "default" && import_info.has_default)
+                || import_info.specifiers.iter().any(|s| s == &exp.name)
+              {
+                used = true;
+                break;
+              }
             }
           }
-        }
 
-        if !used {
-          unused_set.insert((module_path.clone(), export.clone()));
+          if !used {
+            unused_set.insert((module_path.clone(), exp.name.clone()));
+          }
         }
       }
     }
 
     let mut unused_vec: Vec<_> = unused_set.into_iter().collect();
-    unused_vec.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1))); // optionnel, pour tri stable
+    unused_vec.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
     unused_vec
   }
 }
 
-/// Helper: parse a source string in memory
-fn parse_from_str(path: &Path, source: &str) -> Result<ParsedFile> {
+/// Parse a source string in memory
+fn parse_module_from_path(path: &Path, source: &str) -> Result<ParsedFile> {
   let allocator = Allocator::default();
   let source_type = SourceType::from_path(path).unwrap_or(SourceType::ts());
   let parser = OxcParser::new(&allocator, source, source_type);
@@ -151,10 +197,13 @@ fn parse_from_str(path: &Path, source: &str) -> Result<ParsedFile> {
   Ok(pf)
 }
 
-/// Extract imports & exports from Oxc Program
+fn normalize_soft(path: &Path) -> PathBuf {
+  PathBuf::from(path).clean()
+}
+
 fn extract_imports_exports(path: &Path, program: &Program) -> ParsedFile {
-  let mut imports = Vec::new();
-  let mut exports = Vec::new();
+  let mut imports: Vec<ImportInfo> = Vec::new();
+  let mut exports: Vec<ExportItem> = Vec::new();
 
   for stmt in &program.body {
     match stmt {
@@ -198,26 +247,47 @@ fn extract_imports_exports(path: &Path, program: &Program) -> ParsedFile {
               .map(|n| n.to_string())
               .or_else(|| spec.local.identifier_name().map(|n| n.to_string()))
               .unwrap_or_else(|| "<unknown>".to_string());
-            exports.push(exported);
+
+            let source_path = PathBuf::from(src.value.to_string());
+
+            exports.push(ExportItem::Named(ExportInfo {
+              name: exported,
+              source: Some(source_path),
+            }));
           }
         } else {
           if let Some(decl) = &export.declaration {
             match decl {
               Declaration::TSInterfaceDeclaration(int) => {
-                exports.push(int.id.name.to_string());
+                exports.push(ExportItem::Named(ExportInfo {
+                  name: int.id.name.to_string(),
+                  source: None,
+                }));
               }
               Declaration::TSTypeAliasDeclaration(ta) => {
-                exports.push(ta.id.name.to_string());
+                exports.push(ExportItem::Named(ExportInfo {
+                  name: ta.id.name.to_string(),
+                  source: None,
+                }));
               }
               Declaration::TSEnumDeclaration(en) => {
-                exports.push(en.id.name.to_string());
+                exports.push(ExportItem::Named(ExportInfo {
+                  name: en.id.name.to_string(),
+                  source: None,
+                }));
               }
               Declaration::TSModuleDeclaration(md) => {
-                exports.push(md.id.name().to_string());
+                exports.push(ExportItem::Named(ExportInfo {
+                  name: md.id.name().to_string(),
+                  source: None,
+                }));
               }
               Declaration::FunctionDeclaration(fd) => {
                 if let Some(id) = &fd.id {
-                  exports.push(id.name.to_string());
+                  exports.push(ExportItem::Named(ExportInfo {
+                    name: id.name.to_string(),
+                    source: None,
+                  }));
                 }
               }
               Declaration::VariableDeclaration(vd) => {
@@ -227,12 +297,18 @@ fn extract_imports_exports(path: &Path, program: &Program) -> ParsedFile {
                     .get_identifier_name()
                     .map(|n| n.to_string())
                     .unwrap_or_else(|| "<unknown>".to_string());
-                  exports.push(exported);
+                  exports.push(ExportItem::Named(ExportInfo {
+                    name: exported,
+                    source: None,
+                  }));
                 }
               }
               Declaration::ClassDeclaration(cd) => {
                 if let Some(id) = &cd.id {
-                  exports.push(id.name.to_string());
+                  exports.push(ExportItem::Named(ExportInfo {
+                    name: id.name.to_string(),
+                    source: None,
+                  }));
                 }
               }
               _ => {}
@@ -246,17 +322,26 @@ fn extract_imports_exports(path: &Path, program: &Program) -> ParsedFile {
               .map(|n| n.to_string())
               .or_else(|| spec.local.identifier_name().map(|n| n.to_string()))
               .unwrap_or_else(|| "<unknown>".to_string());
-            exports.push(exported);
+
+            exports.push(ExportItem::Named(ExportInfo {
+              name: exported,
+              source: None,
+            }));
           }
         }
       }
 
       Statement::ExportDefaultDeclaration(_) => {
-        exports.push("default".to_string());
+        exports.push(ExportItem::Named(ExportInfo {
+          name: "default".to_string(),
+          source: None,
+        }));
       }
 
-      Statement::ExportAllDeclaration(_) => {
-        exports.push("*".to_string());
+      Statement::ExportAllDeclaration(export_all) => {
+        exports.push(ExportItem::All(PathBuf::from(
+          export_all.source.value.to_string(),
+        )));
       }
 
       _ => {}
@@ -277,38 +362,23 @@ fn is_relative(spec: &str) -> bool {
 
 /// Resolve relative import in memory using a HashSet of file paths
 pub fn resolve_relative_import_from_set(
-  from: &Path,
   spec: &str,
   file_set: &HashSet<PathBuf>,
 ) -> Option<PathBuf> {
-  let base = from.parent().unwrap_or(Path::new("."));
-  let candidate = base.join(spec);
+  let candidate = normalize_soft(Path::new(spec));
 
   const CANDIDATE_EXTS: &[&str] = &[".ts", ".tsx", ".js", ".jsx"];
 
   for ext in CANDIDATE_EXTS {
-    let p = candidate.with_extension(ext.trim_start_matches('.'));
-    if file_set.contains(&p) {
-      return Some(p);
+    let with_extension = candidate.with_extension(ext.trim_start_matches('.'));
+
+    if file_set.contains(&with_extension) {
+      return Some(with_extension);
     }
   }
 
   if file_set.contains(&candidate) {
     return Some(candidate);
-  }
-
-  for ext in CANDIDATE_EXTS {
-    let p = candidate.join(format!("index{}", ext));
-    if file_set.contains(&p) {
-      return Some(p);
-    }
-  }
-
-  for ext in CANDIDATE_EXTS {
-    let p = PathBuf::from(format!("{}{}", candidate.display(), ext));
-    if file_set.contains(&p) {
-      return Some(p);
-    }
   }
 
   None
@@ -357,7 +427,10 @@ mod tests {
       "#,
     );
 
-    sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./path-to-exports/exports-named.ts"),
+      exports_named(),
+    );
 
     let sources_ref: HashMap<PathBuf, &str> =
       sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
@@ -366,61 +439,79 @@ mod tests {
     let entrypoints = vec![PathBuf::from("./index.ts")];
     let reachable = analyzer.compute_reachable(&entrypoints);
 
-    assert!(reachable.contains(&PathBuf::from("./index.ts")));
-    assert!(!reachable.contains(&PathBuf::from("./exports-named.ts")));
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(!reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
 
     let unused_exports = analyzer.find_unused_exports();
     assert_eq!(
       unused_exports,
       vec![
-        (PathBuf::from("./exports-named.ts"), "Baz".to_string()),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "Baz".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "MyAbstractClass".to_string()
         ),
-        (PathBuf::from("./exports-named.ts"), "MyEnum".to_string()),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "MyEnum".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "MyInterface".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "MyNamespace".to_string()
         ),
-        (PathBuf::from("./exports-named.ts"), "MyType".to_string()),
-        (PathBuf::from("./exports-named.ts"), "bar".to_string()),
-        (PathBuf::from("./exports-named.ts"), "foo".to_string()),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "MyType".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "bar".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "foo".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myArrowFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myAsyncFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myConstEnum".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myDeclaredFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myGeneratorFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myIntersectionType".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myOverloadedFunction".to_string()
         ),
-        (PathBuf::from("./exports-named.ts"), "myTuple".to_string()),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "myTuple".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myUnionType".to_string()
         ),
       ]
@@ -434,13 +525,16 @@ mod tests {
     sources.insert(
       PathBuf::from("./index.ts"),
       r#"
-        import { foo, bar, type MyInterface } from "./exports-named";
-        import type { MyType } from "./exports-named";
+        import { foo, bar, type MyInterface } from "./path-to-exports/exports-named";
+        import type { MyType } from "./path-to-exports/exports-named";
         console.log("Hello World");
       "#,
     );
 
-    sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./path-to-exports/exports-named.ts"),
+      exports_named(),
+    );
 
     let sources_ref: HashMap<PathBuf, &str> =
       sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
@@ -449,54 +543,63 @@ mod tests {
     let entrypoints = vec![PathBuf::from("./index.ts")];
     let reachable = analyzer.compute_reachable(&entrypoints);
 
-    assert!(reachable.contains(&PathBuf::from("./index.ts")));
-    assert!(reachable.contains(&PathBuf::from("./exports-named.ts")));
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
 
     let unused_exports = analyzer.find_unused_exports();
     assert_eq!(
       unused_exports,
       vec![
-        (PathBuf::from("./exports-named.ts"), "Baz".to_string()),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "Baz".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "MyAbstractClass".to_string()
         ),
-        (PathBuf::from("./exports-named.ts"), "MyEnum".to_string()),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "MyEnum".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "MyNamespace".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myArrowFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myAsyncFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myConstEnum".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myDeclaredFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myGeneratorFunction".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myIntersectionType".to_string()
         ),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myOverloadedFunction".to_string()
         ),
-        (PathBuf::from("./exports-named.ts"), "myTuple".to_string()),
         (
-          PathBuf::from("./exports-named.ts"),
+          PathBuf::from("path-to-exports/exports-named.ts"),
+          "myTuple".to_string()
+        ),
+        (
+          PathBuf::from("path-to-exports/exports-named.ts"),
           "myUnionType".to_string()
         ),
       ]
@@ -510,12 +613,15 @@ mod tests {
     sources.insert(
       PathBuf::from("./index.ts"),
       r#"
-        import * as exportsNamed from "./exports-named";
+        import * as exportsNamed from "./path-to-exports/exports-named";
         console.log("Hello World");
       "#,
     );
 
-    sources.insert(PathBuf::from("./exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./path-to-exports/exports-named.ts"),
+      exports_named(),
+    );
 
     let sources_ref: HashMap<PathBuf, &str> =
       sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
@@ -524,10 +630,204 @@ mod tests {
     let entrypoints = vec![PathBuf::from("./index.ts")];
     let reachable = analyzer.compute_reachable(&entrypoints);
 
-    assert!(reachable.contains(&PathBuf::from("./index.ts")));
-    assert!(reachable.contains(&PathBuf::from("./exports-named.ts")));
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
 
     let unused_exports = analyzer.find_unused_exports();
     assert_eq!(unused_exports, vec![]);
   }
+
+  #[test]
+  fn test_import_exports_all() {
+    let mut sources = HashMap::new();
+
+    sources.insert(
+      PathBuf::from("./index.ts"),
+      r#"
+        import * as all from "./exports-all";
+        console.log("Hello World");
+      "#,
+    );
+
+    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./exports-all.ts"),
+      r#"
+        export * from './exports-named'
+        export const extra = 'extra'
+      "#,
+    );
+
+    let sources_ref: HashMap<PathBuf, &str> =
+      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+
+    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+    let entrypoints = vec![PathBuf::from("./index.ts")];
+    let reachable = analyzer.compute_reachable(&entrypoints);
+
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
+
+    let unused_exports = analyzer.find_unused_exports();
+    assert_eq!(unused_exports, vec![]);
+  }
+
+  // #[test]
+  // fn test_unused_exports_all() {
+  //   let mut sources = HashMap::new();
+
+  //   sources.insert(
+  //     PathBuf::from("./index.ts"),
+  //     r#"
+  //       console.log("Hello World");
+  //     "#,
+  //   );
+
+  //   sources.insert(PathBuf::from("exports-named.ts"), exports_named());
+  //   sources.insert(
+  //     PathBuf::from("./exports-all.ts"),
+  //     r#"
+  //       export * from './exports-named'
+  //       export const extra = 'extra'
+  //     "#,
+  //   );
+
+  //   let sources_ref: HashMap<PathBuf, &str> =
+  //     sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+
+  //   let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+  //   let entrypoints = vec![PathBuf::from("./index.ts")];
+  //   let reachable = analyzer.compute_reachable(&entrypoints);
+
+  //   assert!(reachable.contains(&PathBuf::from("index.ts")));
+  //   assert!(!reachable.contains(&PathBuf::from("./exports-all.ts")));
+  //   assert!(!reachable.contains(&PathBuf::from("exports-named.ts")));
+
+  //   let unused_exports = analyzer.find_unused_exports();
+
+  //   assert_eq!(
+  //     unused_exports,
+  //     vec![
+  //       (PathBuf::from("./exports-all.ts"), "Baz".to_string()),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "MyAbstractClass".to_string()
+  //       ),
+  //       (PathBuf::from("./exports-all.ts"), "MyEnum".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "MyInterface".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "MyNamespace".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "MyType".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "bar".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "extra".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "foo".to_string()),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myArrowFunction".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myAsyncFunction".to_string()
+  //       ),
+  //       (PathBuf::from("./exports-all.ts"), "myConstEnum".to_string()),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myDeclaredFunction".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myGeneratorFunction".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myIntersectionType".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myOverloadedFunction".to_string()
+  //       ),
+  //       (PathBuf::from("./exports-all.ts"), "myTuple".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "myUnionType".to_string()),
+  //     ]
+  //   );
+  // }
+
+  // #[test]
+  // fn tessss() {
+  //   let mut sources = HashMap::new();
+
+  //   sources.insert(
+  //     PathBuf::from("./index.ts"),
+  //     r#"
+  //       import { foo } from "./exports-named";';
+  //       console.log("Hello World");
+  //     "#,
+  //   );
+
+  //   sources.insert(PathBuf::from("exports-named.ts"), exports_named());
+  //   sources.insert(
+  //     PathBuf::from("./exports-all.ts"),
+  //     r#"
+  //       export * from './exports-named'
+  //       export const extra = 'extra'
+  //     "#,
+  //   );
+
+  //   let sources_ref: HashMap<PathBuf, &str> =
+  //     sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+
+  //   let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+  //   let entrypoints = vec![PathBuf::from("./index.ts")];
+  //   let reachable = analyzer.compute_reachable(&entrypoints);
+
+  //   assert!(reachable.contains(&PathBuf::from("index.ts")));
+  //   assert!(!reachable.contains(&PathBuf::from("./exports-all.ts")));
+  //   assert!(!reachable.contains(&PathBuf::from("exports-named.ts")));
+
+  //   let unused_exports = analyzer.find_unused_exports();
+
+  //   assert_eq!(
+  //     unused_exports,
+  //     vec![
+  //       (PathBuf::from("./exports-all.ts"), "Baz".to_string()),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "MyAbstractClass".to_string()
+  //       ),
+  //       (PathBuf::from("./exports-all.ts"), "MyEnum".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "MyInterface".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "MyNamespace".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "MyType".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "bar".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "extra".to_string()),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myArrowFunction".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myAsyncFunction".to_string()
+  //       ),
+  //       (PathBuf::from("./exports-all.ts"), "myConstEnum".to_string()),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myDeclaredFunction".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myGeneratorFunction".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myIntersectionType".to_string()
+  //       ),
+  //       (
+  //         PathBuf::from("./exports-all.ts"),
+  //         "myOverloadedFunction".to_string()
+  //       ),
+  //       (PathBuf::from("./exports-all.ts"), "myTuple".to_string()),
+  //       (PathBuf::from("./exports-all.ts"), "myUnionType".to_string()),
+  //     ]
+  //   );
+  // }
 }
