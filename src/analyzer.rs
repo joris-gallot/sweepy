@@ -116,7 +116,7 @@ impl ProjectAnalyzer {
   }
 
   /// Compute reachable files from entrypoints
-  pub fn compute_reachable(&self, entrypoints: &Vec<PathBuf>) -> HashSet<PathBuf> {
+  pub fn compute_reachable(&self, entrypoints: Vec<PathBuf>) -> HashSet<PathBuf> {
     let file_set: HashSet<PathBuf> = self.files.keys().cloned().collect();
     let mut visited = HashSet::new();
     let mut stack = Vec::new();
@@ -496,7 +496,7 @@ mod tests {
 
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
     let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(&entrypoints);
+    let reachable = analyzer.compute_reachable(entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("index.ts")));
     assert!(!reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
@@ -600,7 +600,7 @@ mod tests {
 
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
     let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(&entrypoints);
+    let reachable = analyzer.compute_reachable(entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("index.ts")));
     assert!(reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
@@ -687,7 +687,7 @@ mod tests {
 
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
     let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(&entrypoints);
+    let reachable = analyzer.compute_reachable(entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("index.ts")));
     assert!(reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
@@ -722,7 +722,7 @@ mod tests {
 
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
     let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(&entrypoints);
+    let reachable = analyzer.compute_reachable(entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("index.ts")));
     assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
@@ -758,7 +758,7 @@ mod tests {
 
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
     let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(&entrypoints);
+    let reachable = analyzer.compute_reachable(entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("index.ts")));
     assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
@@ -851,7 +851,7 @@ mod tests {
 
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
     let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(&entrypoints);
+    let reachable = analyzer.compute_reachable(entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("index.ts")));
     assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
@@ -894,7 +894,7 @@ mod tests {
 
     let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
     let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(&entrypoints);
+    let reachable = analyzer.compute_reachable(entrypoints);
 
     assert!(reachable.contains(&PathBuf::from("index.ts")));
     assert!(!reachable.contains(&PathBuf::from("exports-all.ts")));
@@ -974,7 +974,7 @@ mod tests {
 
   //   let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
   //   let entrypoints = vec![PathBuf::from("./index.ts")];
-  //   let reachable = analyzer.compute_reachable(&entrypoints);
+  //   let reachable = analyzer.compute_reachable(entrypoints);
 
   //   assert!(reachable.contains(&PathBuf::from("index.ts")));
   //   assert!(!reachable.contains(&PathBuf::from("./exports-all.ts")));

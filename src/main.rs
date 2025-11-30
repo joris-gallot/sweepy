@@ -38,7 +38,10 @@ fn main() -> Result<()> {
   let sources = collect_source_files(&args.root)?;
   let sources_ref: HashMap<PathBuf, &str> = sources
     .iter()
-    .map(|(p, c)| (p.clone(), c.as_str()))
+    .map(|(p, c)| {
+      let relative_path = p.strip_prefix(&args.root).unwrap_or(p).to_path_buf();
+      (relative_path, c.as_str())
+    })
     .collect();
 
   let analyzer = ProjectAnalyzer::from_sources(&sources_ref)?;
@@ -51,7 +54,7 @@ fn main() -> Result<()> {
     find_default_entrypoints(&args.root, &file_set)
   };
 
-  let reachable = analyzer.compute_reachable(&entrypoints);
+  let reachable = analyzer.compute_reachable(entrypoints);
   println!("Reachable files:");
   for f in &reachable {
     println!("  - {}", f.display());
