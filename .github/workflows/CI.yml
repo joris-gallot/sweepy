@@ -52,6 +52,19 @@ jobs:
 
       - name: Clippy
         run: cargo clippy
+
+  cargo-tests:
+    name: Cargo Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Tests
+        run: cargo test
+
   build:
     strategy:
       fail-fast: false
