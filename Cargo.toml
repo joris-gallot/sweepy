@@ -12,7 +12,6 @@ crate-type = ["cdylib"]
 napi = "3.0.0"
 napi-derive = "3.0.0"
 walkdir = "2.3"
-clap = { version = "4.3", features = ["derive"] }
 oxc_allocator = "0.99.0"
 oxc_parser = "0.99.0"
 oxc_span = "0.99.0"
