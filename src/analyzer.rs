@@ -38,7 +38,6 @@ pub struct ProjectAnalyzer {
   pub files: HashMap<PathBuf, ParsedFile>,
   pub graph: HashMap<PathBuf, HashSet<PathBuf>>,
   pub import_usage: HashMap<PathBuf, Vec<(PathBuf, ImportInfo)>>,
-  pub file_set: HashSet<PathBuf>,
 }
 
 impl ProjectAnalyzer {
@@ -113,7 +112,6 @@ impl ProjectAnalyzer {
       files,
       graph,
       import_usage,
-      file_set,
     })
   }
 

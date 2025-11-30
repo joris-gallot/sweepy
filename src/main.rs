@@ -47,7 +47,8 @@ fn main() -> Result<()> {
     args.entry.clone()
   } else {
     println!("No entrypoints provided, trying defaults...");
-    find_default_entrypoints(&args.root, &analyzer.file_set)
+    let file_set: HashSet<PathBuf> = analyzer.files.keys().cloned().collect();
+    find_default_entrypoints(&args.root, &file_set)
   };
 
   let reachable = analyzer.compute_reachable(&entrypoints);
