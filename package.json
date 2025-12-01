@@ -10,7 +10,18 @@
   },
   "license": "MIT",
   "browser": "browser.js",
-  "keywords": ["typescript", "javascript", "oxc", "napi", "unused", "exports", "imports", "analyzer", "tree-shaking", "lint"],
+  "keywords": [
+    "typescript",
+    "javascript",
+    "oxc",
+    "napi",
+    "unused",
+    "exports",
+    "imports",
+    "analyzer",
+    "tree-shaking",
+    "lint"
+  ],
   "files": [
     "index.d.ts",
     "index.js",
@@ -85,9 +96,23 @@
   },
   "pnpm": {
     "supportedArchitectures": {
-      "os": ["darwin","linux","win32","current"],
-      "cpu": ["current", "arm64", "x64", "arm"],
-      "libc": ["current","musl","gnu"]
+      "os": [
+        "darwin",
+        "linux",
+        "win32",
+        "current"
+      ],
+      "cpu": [
+        "current",
+        "arm64",
+        "x64",
+        "arm"
+      ],
+      "libc": [
+        "current",
+        "musl",
+        "gnu"
+      ]
     }
   }
 }
