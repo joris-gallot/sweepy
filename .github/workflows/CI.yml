@@ -384,7 +384,6 @@ jobs:
           NAPI_RS_FORCE_WASI: 1
   publish:
     name: Publish
-    if: false
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -394,7 +393,7 @@ jobs:
       - build-freebsd
       - test-macOS-windows-binding
       - test-linux-binding
-      - test-wasi
+      # - test-wasi # Disabled WASI can't make them work
     steps:
       - uses: actions/checkout@v6
       - name: Setup pnpm

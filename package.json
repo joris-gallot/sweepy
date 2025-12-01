@@ -1,6 +1,6 @@
 {
   "name": "@sweepy/core",
-  "version": "0.0.1",
+  "version": "0.0.1-alpha",
   "description": "Find and remove unused exports in JS/TS projects",
   "main": "index.js",
   "packageManager": "pnpm@10.22.0",
