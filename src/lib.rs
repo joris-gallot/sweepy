@@ -60,18 +60,23 @@ pub fn sweepy(_root: String, entries: Vec<String>) -> SweepyResult {
   let reachable = analyzer.compute_reachable(entrypoints);
   let unused_exports_raw = analyzer.find_unused_exports();
 
-  let reachable_files: Vec<String> = reachable
+  let mut reachable_files: Vec<String> = reachable
     .into_iter()
     .map(|p| p.to_string_lossy().to_string())
     .collect();
 
-  let unused_exports: Vec<UnusedExport> = unused_exports_raw
+  reachable_files.sort();
+
+  let mut unused_exports: Vec<UnusedExport> = unused_exports_raw
     .into_iter()
     .map(|(path, name)| UnusedExport {
       file: path.to_string_lossy().to_string(),
       name,
     })
     .collect();
+
+  // sort unused exports by file and then by name
+  unused_exports.sort_by(|a, b| a.file.cmp(&b.file).then_with(|| a.name.cmp(&b.name)));
 
   SweepyResult {
     reachable_files,

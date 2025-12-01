@@ -8,7 +8,7 @@ test('simple export', (t) => {
   const res = sweepy(root, [entry])
 
   t.deepEqual(res, {
-    reachableFiles: ['index.ts', 'export-simple.ts'],
+    reachableFiles: ['export-simple.ts', 'index.ts'],
     unusedExports: []
   })
 })
