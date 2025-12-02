@@ -184,7 +184,94 @@ test('exports named - some import', async (t) => {
   })
 })
 
-test('exports all', async (t) => {
+test('exports all - no imports', async (t) => {
+  const {root, indexFile} = await prepareTsProject({
+    name: 'exports-all',
+    indexContent: '// no imports'
+  })
+
+  const res = sweepy(root, [indexFile])
+
+  t.deepEqual(res, {
+    reachableFiles: ['index.ts'],
+    unusedExports: [
+      {
+        file: 'exports-all.ts',
+        name: 'extra',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'Baz',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyAbstractClass',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyEnum',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyInterface',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyNamespace',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyType',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'bar',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'foo',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myArrowFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myAsyncFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myConstEnum',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myDeclaredFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myGeneratorFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myIntersectionType',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myOverloadedFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myTuple',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myUnionType',
+      },
+    ]
+  })
+})
+
+test('exports all - some import', async (t) => {
   const {root, indexFile} = await prepareTsProject({
     name: 'exports-all',
     indexContent: 'import { foo } from "./exports-all";'
