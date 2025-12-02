@@ -3,7 +3,7 @@
   "version": "0.0.1-alpha",
   "description": "Find and remove unused exports in JS/TS projects",
   "main": "index.js",
-  "packageManager": "pnpm@10.22.0",
+  "packageManager": "pnpm@10.24.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/joris-gallot/sweepy.git"
@@ -71,7 +71,7 @@
     "@emnapi/core": "^1.5.0",
     "@emnapi/runtime": "^1.5.0",
     "@napi-rs/cli": "^3.2.0",
-    "@oxc-node/core": "^0.0.34",
+    "@oxc-node/core": "^0.0.35",
     "@taplo/cli": "^0.7.0",
     "@tybys/wasm-util": "^0.10.0",
     "ava": "^6.4.1",
