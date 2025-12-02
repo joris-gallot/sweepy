@@ -1,7 +1,7 @@
 import test from 'ava'
 import path from 'node:path'
 import { sweepy } from '../index'
-import { writeFile, glob, mkdtemp, readFile } from 'node:fs/promises'
+import { writeFile, glob, mkdtemp, readFile, mkdir } from 'node:fs/promises'
 import os from 'node:os'
 
 async function prepareTsProject({ name, indexContent }:{ name: string, indexContent: string }) {
@@ -13,6 +13,8 @@ async function prepareTsProject({ name, indexContent }:{ name: string, indexCont
   await Promise.all(files.map(async (file) => {
     const src = path.join(tsProject, file)
     const dest = path.join(root, file)
+    const destDir = path.dirname(dest)
+    await mkdir(destDir, { recursive: true })
     await writeFile(dest, await readFile(src))
   }))
 
@@ -143,6 +145,77 @@ test('exports named - some import', async (t) => {
       {
         file: 'exports-named.ts',
         name: 'bar',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myArrowFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myAsyncFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myConstEnum',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myDeclaredFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myGeneratorFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myIntersectionType',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myOverloadedFunction',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myTuple',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'myUnionType',
+      },
+    ]
+  })
+})
+
+test('import from deep path', async (t) => {
+  const {root, indexFile} = await prepareTsProject({
+    name: 'exports-named-deep',
+    indexContent: 'import "./deep/folder/import";'
+  })
+
+  const res = sweepy(root, [indexFile])
+
+  t.deepEqual(res, {
+    reachableFiles: [path.join('deep', 'folder', 'import.ts'), 'exports-named.ts', 'index.ts'],
+    unusedExports: [
+      {
+        file: 'exports-named.ts',
+        name: 'MyAbstractClass',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyEnum',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyInterface',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyNamespace',
+      },
+      {
+        file: 'exports-named.ts',
+        name: 'MyType',
       },
       {
         file: 'exports-named.ts',

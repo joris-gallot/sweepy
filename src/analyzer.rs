@@ -58,7 +58,7 @@ impl ProjectAnalyzer {
     for (path, pf) in &files {
       for imp in &pf.imports {
         if is_relative(&imp.source)
-          && let Some(target) = resolve_relative_import_from_set(&imp.source, &file_set)
+          && let Some(target) = resolve_relative_import_from_set(path, &imp.source, &file_set)
         {
           graph
             .entry(path.clone())
@@ -75,7 +75,7 @@ impl ProjectAnalyzer {
         match export {
           ExportItem::All(specifier_path) => {
             if let Some(spec) = specifier_path.to_str()
-              && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+              && let Some(target) = resolve_relative_import_from_set(path, spec, &file_set)
             {
               graph
                 .entry(path.clone())
@@ -89,7 +89,7 @@ impl ProjectAnalyzer {
           ExportItem::Named(exp) => {
             if let Some(src) = &exp.source {
               if let Some(spec) = src.to_str()
-                && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+                && let Some(target) = resolve_relative_import_from_set(path, spec, &file_set)
               {
                 graph
                   .entry(path.clone())
@@ -161,7 +161,8 @@ impl ProjectAnalyzer {
                 let has_named_reexport = if let ExportItem::Named(other_exp) = other_export {
                   if let Some(src) = &other_exp.source {
                     if let Some(spec) = src.to_str()
-                      && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+                      && let Some(target) =
+                        resolve_relative_import_from_set(other_module_path, spec, &file_set)
                       && &target == module_path
                       && other_exp.name == exp.name
                     {
@@ -178,7 +179,8 @@ impl ProjectAnalyzer {
 
                 let has_all_reexport = if let ExportItem::All(specifier_path) = other_export
                   && let Some(spec) = specifier_path.to_str()
-                  && let Some(target) = resolve_relative_import_from_set(spec, &file_set)
+                  && let Some(target) =
+                    resolve_relative_import_from_set(other_module_path, spec, &file_set)
                   && &target == module_path
                 {
                   true
@@ -416,10 +418,18 @@ fn is_relative(spec: &str) -> bool {
 
 /// Resolve relative import in memory using a HashSet of file paths
 pub fn resolve_relative_import_from_set(
+  from: &Path,
   spec: &str,
   file_set: &HashSet<PathBuf>,
 ) -> Option<PathBuf> {
   let candidate = normalize_soft(Path::new(spec));
+
+  let candidate = if is_relative(spec) {
+    let from_dir = from.parent().unwrap_or(Path::new(""));
+    normalize_soft(&from_dir.join(&candidate))
+  } else {
+    candidate
+  };
 
   const CANDIDATE_EXTS: &[&str] = &[".ts", ".tsx", ".js", ".jsx"];
 
@@ -991,6 +1001,81 @@ mod tests {
         (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
         (PathBuf::from("exports-named.ts"), "MyType".to_string()),
         (PathBuf::from("exports-named.ts"), "bar".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myArrowFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myAsyncFunction".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myDeclaredFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myGeneratorFunction".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myIntersectionType".to_string()
+        ),
+        (
+          PathBuf::from("exports-named.ts"),
+          "myOverloadedFunction".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
+        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
+      ]
+    );
+  }
+
+  #[test]
+  fn test_import_from_deep_path() {
+    let mut sources = HashMap::new();
+
+    sources.insert(
+      PathBuf::from("./index.ts"),
+      r#"
+        import "./deep/folder/import";';
+        console.log("Hello World");
+      "#,
+    );
+
+    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
+    sources.insert(
+      PathBuf::from("./deep/folder/import.ts"),
+      r#"
+        import {foo, bar, Baz} from '../../exports-named'
+      "#,
+    );
+
+    let sources_ref: HashMap<PathBuf, &str> =
+      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+
+    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
+    let entrypoints = vec![PathBuf::from("./index.ts")];
+    let reachable = analyzer.compute_reachable(entrypoints);
+
+    assert!(reachable.contains(&PathBuf::from("index.ts")));
+    assert!(reachable.contains(&PathBuf::from("deep/folder/import.ts")));
+    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
+
+    let unused_exports = analyzer.find_unused_exports();
+
+    assert_eq!(
+      unused_exports,
+      vec![
+        (
+          PathBuf::from("exports-named.ts"),
+          "MyAbstractClass".to_string()
+        ),
+        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
+        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
         (
           PathBuf::from("exports-named.ts"),
           "myArrowFunction".to_string()
