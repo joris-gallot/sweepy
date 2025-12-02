@@ -8,7 +8,7 @@ async function prepareTsProject({ name, indexContent }:{ name: string, indexCont
   const root = await mkdtemp(path.join(os.tmpdir(), 'sweepy-'))
   const tsProject = path.resolve(import.meta.dirname, 'fixtures', name)
 
-  const files = await Array.fromAsync(glob('**/*.ts', { cwd: tsProject }))
+  const files = await Array.fromAsync(glob('**/*.{js,ts,jsx,tsx}', { cwd: tsProject }))
 
   await Promise.all(files.map(async (file) => {
     const src = path.join(tsProject, file)
@@ -421,6 +421,46 @@ test('exports all - some import', async (t) => {
       },
       {
         file: 'exports-named.ts',
+        name: 'myUnionType',
+      },
+    ]
+  })
+})
+
+
+test('import with extension', async (t) => {
+  const {root, indexFile} = await prepareTsProject({
+    name: 'exports-with-extensions',
+    indexContent: '// no imports'
+  })
+
+  const res = sweepy(root, [indexFile])
+
+  t.deepEqual(res, {
+    reachableFiles: ['index.ts'],
+    unusedExports: [
+      {
+        file: 'exports-named.js',
+        name: 'myArrowFunction',
+      },
+      {
+        file: 'exports-named.js',
+        name: 'myAsyncFunction',
+      },
+      {
+        file: 'exports-named.js',
+        name: 'myGeneratorFunction',
+      },
+      {
+        file: 'exports-named.js',
+        name: 'myIntersectionType',
+      },
+      {
+        file: 'exports-named.js',
+        name: 'myTuple',
+      },
+      {
+        file: 'exports-named.js',
         name: 'myUnionType',
       },
     ]
