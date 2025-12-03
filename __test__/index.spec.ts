@@ -9,7 +9,7 @@ async function prepareTsProject({ name, indexContent }: { name: string; indexCon
   const root = await mkdtemp(path.join(os.tmpdir(), 'sweepy-'))
   const tsProject = path.resolve(import.meta.dirname, 'fixtures', name)
 
-  const files = await Array.fromAsync(glob('**/*.{js,ts,jsx,tsx}', { cwd: tsProject }))
+  const files = await Array.fromAsync(glob('**/*.{js,ts,jsx,tsx,vue}', { cwd: tsProject }))
 
   await Promise.all(
     files.map(async (file) => {

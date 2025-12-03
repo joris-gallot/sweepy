@@ -6,6 +6,7 @@ use oxc_span::SourceType;
 use path_clean::PathClean;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use vue_oxc_parser::parser::VueOxcParser;
 
 #[derive(Debug, Clone)]
 pub struct ImportInfo {
@@ -239,20 +240,29 @@ impl ProjectAnalyzer {
 
 /// Parse a source string in memory
 fn parse_module_from_path(path: &Path, source: &str) -> Result<ParsedFile> {
-  let allocator = Allocator::default();
-  let source_type = SourceType::from_path(path).unwrap_or(SourceType::ts());
-  let parser = OxcParser::new(&allocator, source, source_type);
-  let parsed = parser.parse();
+  let allocator = Allocator::new();
 
-  if !parsed.errors.is_empty() {
+  // Check if this is a Vue file
+  let (program, errors) = if path.extension().and_then(|s| s.to_str()) == Some("vue") {
+    let vue_parser = VueOxcParser::new(&allocator, source);
+    let parsed = vue_parser.parse();
+    (parsed.program, parsed.errors)
+  } else {
+    // Standard JS/TS parsing
+    let source_type = SourceType::from_path(path).unwrap_or(SourceType::ts());
+    let parser = OxcParser::new(&allocator, source, source_type);
+    let parsed = parser.parse();
+    (parsed.program, parsed.errors)
+  };
+
+  if !errors.is_empty() {
     eprintln!(
       "Parser errors in {}: {} error(s)",
       path.display(),
-      parsed.errors.len()
+      errors.len()
     );
   }
 
-  let program = parsed.program;
   let pf = extract_imports_exports(&program);
   Ok(pf)
 }
@@ -261,11 +271,54 @@ fn normalize_soft(path: &Path) -> PathBuf {
   PathBuf::from(path).clean()
 }
 
+/// Extract statements from Vue SFC script blocks
+/// Vue files are parsed as JSX fragments containing <script> elements with the actual code
+fn extract_vue_script_statements<'a>(program: &'a Program<'a>) -> Vec<&'a Statement<'a>> {
+  let mut statements = Vec::new();
+
+  for stmt in &program.body {
+    if let Statement::ExpressionStatement(expr_stmt) = stmt
+      && let Expression::JSXFragment(fragment) = &expr_stmt.expression
+    {
+      // Look for <script> elements in the fragment
+      for child in &fragment.children {
+        if let oxc_ast::ast::JSXChild::Element(element) = child
+          && let oxc_ast::ast::JSXElementName::Identifier(id) = &element.opening_element.name
+          && id.name == "script"
+        {
+          // Extract statements from the script content
+          for script_child in &element.children {
+            if let oxc_ast::ast::JSXChild::ExpressionContainer(container) = script_child
+              && let oxc_ast::ast::JSXExpression::ArrowFunctionExpression(arrow) =
+                &container.expression
+            {
+              for body_stmt in &arrow.body.statements {
+                statements.push(body_stmt);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  statements
+}
+
 fn extract_imports_exports(program: &Program) -> ParsedFile {
   let mut imports: Vec<ImportInfo> = Vec::new();
   let mut exports: Vec<ExportItem> = Vec::new();
 
-  for stmt in &program.body {
+  // Try to extract Vue script statements first
+  let vue_statements = extract_vue_script_statements(program);
+  let statements_to_process: Vec<&Statement> = if !vue_statements.is_empty() {
+    vue_statements
+  } else {
+    // Regular JS/TS file, use program.body directly
+    program.body.iter().collect()
+  };
+
+  for stmt in statements_to_process {
     match stmt {
       Statement::ImportDeclaration(import) => {
         let source_s = import.source.value.to_string();
@@ -431,7 +484,7 @@ pub fn resolve_relative_import_from_set(
     candidate
   };
 
-  const CANDIDATE_EXTS: &[&str] = &[".ts", ".tsx", ".js", ".jsx"];
+  const CANDIDATE_EXTS: &[&str] = &[".ts", ".tsx", ".js", ".jsx", ".vue"];
 
   for ext in CANDIDATE_EXTS {
     let with_extension = candidate.with_extension(ext.trim_start_matches('.'));
@@ -900,6 +953,310 @@ mod tests {
 
       assert_reachable(&analyzer, &entries, &["index.ts", "a.ts", "b.ts"]);
       assert_unused(&analyzer, vec![]);
+    }
+  }
+
+  // ===== Vue Files =====
+  mod vue_files {
+    use super::*;
+
+    #[test]
+    fn vue_file_with_script_setup() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { useCounter } from './Counter.vue';")
+        .add_file(
+          "Counter.vue",
+          r#"<template>
+  <div>{{ count }}</div>
+</template>
+<script setup>
+export const useCounter = () => {
+  const count = 1;
+  return { count };
+};
+export const unusedHelper = () => {};
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "Counter.vue"]);
+      assert_unused(&analyzer, vec![("Counter.vue", "unusedHelper")]);
+    }
+
+    #[test]
+    fn vue_file_with_regular_script() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { helper } from './utils.vue';")
+        .add_file(
+          "utils.vue",
+          r#"<template>
+  <div>Utils</div>
+</template>
+<script>
+export const helper = () => 'help';
+export const unused = () => 'unused';
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.vue"]);
+      assert_unused(&analyzer, vec![("utils.vue", "unused")]);
+    }
+
+    #[test]
+    fn vue_file_unused() {
+      let project = TestProject::new()
+        .add_file("index.ts", "console.log('entry');")
+        .add_file(
+          "Component.vue",
+          r#"<template>
+  <div>Component</div>
+</template>
+<script setup>
+export const foo = 1;
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts"]);
+      assert_unused(&analyzer, vec![("Component.vue", "foo")]);
+    }
+
+    #[test]
+    fn vue_file_importing_another_vue() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { App } from './App.vue';")
+        .add_file(
+          "App.vue",
+          r#"<template>
+  <Child />
+</template>
+<script setup>
+import { Child } from './Child.vue';
+export const App = {};
+</script>"#,
+        )
+        .add_file(
+          "Child.vue",
+          r#"<template>
+  <div>Child</div>
+</template>
+<script setup>
+export const Child = {};
+export const unused = 123;
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "App.vue", "Child.vue"]);
+      assert_unused(&analyzer, vec![("Child.vue", "unused")]);
+    }
+
+    #[test]
+    fn vue_file_with_typescript() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import type { MyType } from './types.vue';")
+        .add_file(
+          "types.vue",
+          r#"<template>
+  <div>Types</div>
+</template>
+<script setup lang="ts">
+export type MyType = string;
+export type Interface = {
+  id: number;
+};
+export const value = 42;
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "types.vue"]);
+      assert_unused(
+        &analyzer,
+        vec![("types.vue", "value"), ("types.vue", "Interface")],
+      );
+    }
+
+    #[test]
+    fn vue_imports_from_typescript() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { Component } from './Component.vue';")
+        .add_file(
+          "Component.vue",
+          r#"<template>
+  <div>{{ helper() }}</div>
+</template>
+<script setup>
+import { helper } from './utils.ts';
+export const Component = {};
+</script>"#,
+        )
+        .add_file(
+          "utils.ts",
+          "export const helper = () => 'help';\nexport const unusedHelper = () => 'unused';",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "Component.vue", "utils.ts"],
+      );
+      assert_unused(&analyzer, vec![("utils.ts", "unusedHelper")]);
+    }
+
+    #[test]
+    fn typescript_imports_from_vue() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { useStore } from './store.ts';")
+        .add_file(
+          "store.ts",
+          "import { computed } from './composables.vue';\nexport const useStore = () => computed();\nexport const unused = 123;",
+        )
+        .add_file(
+          "composables.vue",
+          r#"<template>
+  <div>Composables</div>
+</template>
+<script setup>
+export const computed = () => ({ value: 42 });
+export const unusedComposable = () => {};
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "store.ts", "composables.vue"],
+      );
+      assert_unused(
+        &analyzer,
+        vec![
+          ("store.ts", "unused"),
+          ("composables.vue", "unusedComposable"),
+        ],
+      );
+    }
+
+    #[test]
+    fn mixed_vue_ts_imports_chain() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { App } from './App.vue';")
+        .add_file(
+          "App.vue",
+          r#"<template>
+  <div>App</div>
+</template>
+<script setup>
+import { api } from './api.ts';
+export const App = {};
+</script>"#,
+        )
+        .add_file(
+          "api.ts",
+          "import { http } from './http.vue';\nexport const api = { http };\nexport const unusedApi = {};",
+        )
+        .add_file(
+          "http.vue",
+          r#"<template>
+  <div>HTTP</div>
+</template>
+<script setup>
+export const http = { get: () => {} };
+export const unused = 'test';
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "App.vue", "api.ts", "http.vue"],
+      );
+      assert_unused(
+        &analyzer,
+        vec![("api.ts", "unusedApi"), ("http.vue", "unused")],
+      );
+    }
+
+    #[test]
+    fn vue_imports_without_extension() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { Component } from './Component.vue';")
+        .add_file(
+          "Component.vue",
+          r#"<template>
+  <div>Component</div>
+</template>
+<script setup>
+import { helper } from './utils';
+export const Component = {};
+</script>"#,
+        )
+        .add_file(
+          "utils.ts",
+          "export const helper = () => 'help';\nexport const unused = 'test';",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "Component.vue", "utils.ts"],
+      );
+      assert_unused(&analyzer, vec![("utils.ts", "unused")]);
+    }
+
+    #[test]
+    fn vue_imports_from_vue_without_extension() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { App } from './App.vue';")
+        .add_file(
+          "App.vue",
+          r#"<template>
+  <Child />
+</template>
+<script setup>
+import { Child } from './Child';
+export const App = {};
+</script>"#,
+        )
+        .add_file(
+          "Child.vue",
+          r#"<template>
+  <div>Child</div>
+</template>
+<script setup>
+export const Child = {};
+export const unused = 123;
+</script>"#,
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "App.vue", "Child.vue"]);
+      assert_unused(&analyzer, vec![("Child.vue", "unused")]);
     }
   }
 }

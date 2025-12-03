@@ -26,7 +26,7 @@ fn collect_source_files(root: &Path) -> Result<HashMap<PathBuf, String>> {
   for entry in WalkDir::new(root).into_iter().filter_map(|e| e.ok()) {
     let p = entry.path();
     if let Some(ext) = p.extension().and_then(|s| s.to_str())
-      && matches!(ext, "ts" | "tsx" | "js" | "jsx")
+      && matches!(ext, "ts" | "tsx" | "js" | "jsx" | "vue")
     {
       let content = fs::read_to_string(p)?;
       files.insert(p.to_path_buf(), content);
