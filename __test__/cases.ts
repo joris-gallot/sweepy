@@ -1,4 +1,5 @@
 import path from "node:path";
+import { SweepyConfig } from "..";
 
 export interface TestCase {
   title: string;
@@ -6,6 +7,7 @@ export interface TestCase {
   indexContent: string;
   expectedReachable: string[];
   expectedUnused: Array<{ file: string; name: string }>;
+  config?: SweepyConfig
 }
 
 export const testCases: TestCase[] = [
@@ -302,5 +304,61 @@ export const testCases: TestCase[] = [
       { file: 'api.ts', name: 'config' },
       { file: 'api.ts', name: 'unusedApiFunction' },
     ],
+  },
+
+  // ===== Path Aliases =====
+  {
+    title: 'path aliases - basic @ alias',
+    fixture: 'path-aliases',
+    indexContent: 'import { helper } from "@/utils";',
+    expectedReachable: ['index.ts', path.join('src', 'utils.ts')],
+    expectedUnused: [
+      { file: path.join('lib', 'helpers.ts'), name: 'bar' },
+      { file: path.join('lib', 'helpers.ts'), name: 'unused2' },
+      { file: path.join('src', 'lib', 'helpers', 'deep.ts'), name: 'deepHelper' },
+      { file: path.join('src', 'lib', 'helpers', 'deep.ts'), name: 'notUsed' },
+      { file: path.join('src', 'utils.ts'), name: 'unused' },
+    ],
+    config: {
+      alias: {
+        '@': 'src',
+      },
+    },
+  },
+  {
+    title: 'path aliases - nested path',
+    fixture: 'path-aliases',
+    indexContent: 'import { deepHelper } from "@/lib/helpers/deep";',
+    expectedReachable: ['index.ts', path.join('src', 'lib', 'helpers', 'deep.ts')],
+    expectedUnused: [
+      { file: path.join('lib', 'helpers.ts'), name: 'bar' },
+      { file: path.join('lib', 'helpers.ts'), name: 'unused2' },
+      { file: path.join('src', 'lib', 'helpers', 'deep.ts'), name: 'notUsed' },
+      { file: path.join('src', 'utils.ts'), name: 'helper' },
+      { file: path.join('src', 'utils.ts'), name: 'unused' },
+    ],
+    config: {
+      alias: {
+        '@': 'src',
+      },
+    },
+  },
+  {
+    title: 'path aliases - multiple aliases',
+    fixture: 'path-aliases',
+    indexContent: 'import { helper } from "@/utils";\nimport { bar } from "~/helpers";',
+    expectedReachable: ['index.ts', path.join('lib', 'helpers.ts'), path.join('src', 'utils.ts')],
+    expectedUnused: [
+      { file: path.join('lib', 'helpers.ts'), name: 'unused2' },
+      { file: path.join('src', 'lib', 'helpers', 'deep.ts'), name: 'deepHelper' },
+      { file: path.join('src', 'lib', 'helpers', 'deep.ts'), name: 'notUsed' },
+      { file: path.join('src', 'utils.ts'), name: 'unused' },
+    ],
+    config: {
+      alias: {
+        '@': 'src',
+        '~': 'lib',
+      },
+    },
   },
 ];

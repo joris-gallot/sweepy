@@ -36,7 +36,7 @@ for (const testCase of testCases) {
       indexContent: testCase.indexContent,
     })
 
-    const res = sweepy(root, [indexFile])
+    const res = sweepy(root, [indexFile], testCase.config)
 
     t.deepEqual(res, {
       reachableFiles: testCase.expectedReachable,

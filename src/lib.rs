@@ -1,7 +1,7 @@
 use napi_derive::napi;
 mod analyzer;
 
-use analyzer::{ProjectAnalyzer, SUPPORTED_EXTENSIONS};
+use analyzer::{ProjectAnalyzer, SUPPORTED_EXTENSIONS, SweepyConfig as AnalyzerConfig};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::fs;
@@ -20,6 +20,11 @@ pub struct SweepyResult {
   pub unused_exports: Vec<UnusedExport>,
 }
 
+#[napi(object)]
+pub struct SweepyConfig {
+  pub alias: Option<HashMap<String, String>>,
+}
+
 /// Collect all ts/tsx/js/jsx files under root
 fn collect_source_files(root: &Path) -> Result<HashMap<PathBuf, String>> {
   let mut files = HashMap::new();
@@ -36,7 +41,7 @@ fn collect_source_files(root: &Path) -> Result<HashMap<PathBuf, String>> {
 }
 
 #[napi]
-pub fn sweepy(_root: String, entries: Vec<String>) -> SweepyResult {
+pub fn sweepy(_root: String, entries: Vec<String>, config: Option<SweepyConfig>) -> SweepyResult {
   let root = PathBuf::from(_root);
 
   let sources = collect_source_files(&root).expect("Failed to collect source files");
@@ -48,7 +53,12 @@ pub fn sweepy(_root: String, entries: Vec<String>) -> SweepyResult {
     })
     .collect();
 
-  let analyzer = ProjectAnalyzer::from_sources(&sources_ref).expect("Failed to analyze project");
+  let analyzer_config = config.map(|c| AnalyzerConfig {
+    alias: c.alias.unwrap_or_default(),
+  });
+
+  let analyzer = ProjectAnalyzer::from_sources(&sources_ref, analyzer_config)
+    .expect("Failed to analyze project");
   let entrypoints: Vec<PathBuf> = entries
     .iter()
     .map(|e| {

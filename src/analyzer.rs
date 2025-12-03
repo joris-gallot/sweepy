@@ -11,6 +11,11 @@ use vue_oxc_parser::parser::VueOxcParser;
 /// Supported file extensions for source files
 pub const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "vue"];
 
+#[derive(Debug, Clone, Default)]
+pub struct SweepyConfig {
+  pub alias: HashMap<String, String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct ImportInfo {
   pub source: String,          // module specifier as written: "./foo"
@@ -41,10 +46,15 @@ pub struct ProjectAnalyzer {
   pub files: HashMap<PathBuf, ParsedFile>,
   pub graph: HashMap<PathBuf, HashSet<PathBuf>>,
   pub import_usage: HashMap<PathBuf, Vec<(PathBuf, ImportInfo)>>,
+  pub config: SweepyConfig,
 }
 
 impl ProjectAnalyzer {
-  pub fn from_sources(sources: &HashMap<PathBuf, &str>) -> Result<Self> {
+  pub fn from_sources(
+    sources: &HashMap<PathBuf, &str>,
+    config: Option<SweepyConfig>,
+  ) -> Result<Self> {
+    let config = config.unwrap_or_default();
     let mut files = HashMap::new();
 
     for (path, content) in sources {
@@ -61,8 +71,8 @@ impl ProjectAnalyzer {
 
     for (path, pf) in &files {
       for imp in &pf.imports {
-        if is_relative(&imp.source)
-          && let Some(target) = resolve_relative_import_from_set(path, &imp.source, &file_set)
+        if let Some(target) =
+          resolve_relative_import_from_set(path, &imp.source, &file_set, &config.alias)
         {
           graph
             .entry(path.clone())
@@ -79,7 +89,8 @@ impl ProjectAnalyzer {
         match export {
           ExportItem::All(specifier_path) => {
             if let Some(spec) = specifier_path.to_str()
-              && let Some(target) = resolve_relative_import_from_set(path, spec, &file_set)
+              && let Some(target) =
+                resolve_relative_import_from_set(path, spec, &file_set, &config.alias)
             {
               graph
                 .entry(path.clone())
@@ -93,7 +104,8 @@ impl ProjectAnalyzer {
           ExportItem::Named(exp) => {
             if let Some(src) = &exp.source {
               if let Some(spec) = src.to_str()
-                && let Some(target) = resolve_relative_import_from_set(path, spec, &file_set)
+                && let Some(target) =
+                  resolve_relative_import_from_set(path, spec, &file_set, &config.alias)
               {
                 graph
                   .entry(path.clone())
@@ -115,6 +127,7 @@ impl ProjectAnalyzer {
       files,
       graph,
       import_usage,
+      config,
     })
   }
 
@@ -165,8 +178,12 @@ impl ProjectAnalyzer {
                 let has_named_reexport = if let ExportItem::Named(other_exp) = other_export {
                   if let Some(src) = &other_exp.source {
                     if let Some(spec) = src.to_str()
-                      && let Some(target) =
-                        resolve_relative_import_from_set(other_module_path, spec, &file_set)
+                      && let Some(target) = resolve_relative_import_from_set(
+                        other_module_path,
+                        spec,
+                        &file_set,
+                        &self.config.alias,
+                      )
                       && &target == module_path
                       && other_exp.name == exp.name
                     {
@@ -183,8 +200,12 @@ impl ProjectAnalyzer {
 
                 let has_all_reexport = if let ExportItem::All(specifier_path) = other_export
                   && let Some(spec) = specifier_path.to_str()
-                  && let Some(target) =
-                    resolve_relative_import_from_set(other_module_path, spec, &file_set)
+                  && let Some(target) = resolve_relative_import_from_set(
+                    other_module_path,
+                    spec,
+                    &file_set,
+                    &self.config.alias,
+                  )
                   && &target == module_path
                 {
                   true
@@ -477,6 +498,7 @@ pub fn resolve_relative_import_from_set(
   from: &Path,
   spec: &str,
   file_set: &HashSet<PathBuf>,
+  aliases: &HashMap<String, String>,
 ) -> Option<PathBuf> {
   let candidate = normalize_soft(Path::new(spec));
 
@@ -484,7 +506,17 @@ pub fn resolve_relative_import_from_set(
     let from_dir = from.parent().unwrap_or(Path::new(""));
     normalize_soft(&from_dir.join(&candidate))
   } else {
-    candidate
+    // Check if spec starts with an alias
+    let mut resolved_candidate = None;
+    for (alias, target) in aliases {
+      if spec.starts_with(alias) {
+        let remainder = &spec[alias.len()..];
+        let remainder = remainder.trim_start_matches('/');
+        resolved_candidate = Some(normalize_soft(&PathBuf::from(target).join(remainder)));
+        break;
+      }
+    }
+    resolved_candidate.unwrap_or(candidate)
   };
 
   for ext in SUPPORTED_EXTENSIONS {
@@ -535,14 +567,18 @@ mod tests {
     }
 
     fn build(self) -> (ProjectAnalyzer, Vec<PathBuf>) {
+      self.build_with_config(None)
+    }
+
+    fn build_with_config(self, config: Option<SweepyConfig>) -> (ProjectAnalyzer, Vec<PathBuf>) {
       let sources_ref: HashMap<PathBuf, &str> = self
         .sources
         .iter()
-        .map(|(p, c)| (p.clone(), c.as_str()))
+        .map(|(p, c)| (PathBuf::from(p), c.as_str()))
         .collect();
 
-      let analyzer = ProjectAnalyzer::from_sources(&sources_ref).expect("Failed to build analyzer");
-
+      let analyzer =
+        ProjectAnalyzer::from_sources(&sources_ref, config).expect("Failed to analyze");
       (analyzer, self.entries)
     }
   }
@@ -901,6 +937,171 @@ mod tests {
 
       assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
       assert_unused(&analyzer, vec![("utils.ts", "bar")]);
+    }
+
+    #[test]
+    fn path_alias_basic() {
+      let mut aliases = HashMap::new();
+      aliases.insert("@".to_string(), "src".to_string());
+      let config = SweepyConfig { alias: aliases };
+
+      let project = TestProject::new()
+        .add_file("index.ts", "import { helper } from '@/utils';")
+        .add_file(
+          "src/utils.ts",
+          "export const helper = 1;\nexport const unused = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build_with_config(Some(config));
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "src/utils.ts"]);
+      assert_unused(&analyzer, vec![("src/utils.ts", "unused")]);
+    }
+
+    #[test]
+    fn path_alias_nested() {
+      let mut aliases = HashMap::new();
+      aliases.insert("@".to_string(), "src".to_string());
+      let config = SweepyConfig { alias: aliases };
+
+      let project = TestProject::new()
+        .add_file(
+          "index.ts",
+          "import { deepHelper } from '@/lib/helpers/utils';",
+        )
+        .add_file(
+          "src/lib/helpers/utils.ts",
+          "export const deepHelper = 1;\nexport const notUsed = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build_with_config(Some(config));
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "src/lib/helpers/utils.ts"],
+      );
+      assert_unused(&analyzer, vec![("src/lib/helpers/utils.ts", "notUsed")]);
+    }
+
+    #[test]
+    fn path_alias_multiple() {
+      let mut aliases = HashMap::new();
+      aliases.insert("@".to_string(), "src".to_string());
+      aliases.insert("~".to_string(), "lib".to_string());
+      let config = SweepyConfig { alias: aliases };
+
+      let project = TestProject::new()
+        .add_file(
+          "index.ts",
+          "import { foo } from '@/utils';\nimport { bar } from '~/helpers';",
+        )
+        .add_file(
+          "src/utils.ts",
+          "export const foo = 1;\nexport const unused1 = 2;",
+        )
+        .add_file(
+          "lib/helpers.ts",
+          "export const bar = 1;\nexport const unused2 = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build_with_config(Some(config));
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "src/utils.ts", "lib/helpers.ts"],
+      );
+      assert_unused(
+        &analyzer,
+        vec![("src/utils.ts", "unused1"), ("lib/helpers.ts", "unused2")],
+      );
+    }
+
+    #[test]
+    fn path_alias_with_reexport() {
+      let mut aliases = HashMap::new();
+      aliases.insert("@".to_string(), "src".to_string());
+      let config = SweepyConfig { alias: aliases };
+
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from '@/barrel';")
+        .add_file("src/barrel.ts", "export { foo } from './utils';")
+        .add_file(
+          "src/utils.ts",
+          "export const foo = 1;\nexport const bar = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build_with_config(Some(config));
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "src/barrel.ts", "src/utils.ts"],
+      );
+      assert_unused(&analyzer, vec![("src/utils.ts", "bar")]);
+    }
+
+    #[test]
+    fn path_alias_mixed_with_relative() {
+      let mut aliases = HashMap::new();
+      aliases.insert("@".to_string(), "src".to_string());
+      let config = SweepyConfig { alias: aliases };
+
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from '@/utils';")
+        .add_file(
+          "src/utils.ts",
+          "export { foo } from './helpers';\nexport const localUnused = 2;",
+        )
+        .add_file(
+          "src/helpers.ts",
+          "export const foo = 1;\nexport const helperUnused = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build_with_config(Some(config));
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "src/utils.ts", "src/helpers.ts"],
+      );
+      assert_unused(
+        &analyzer,
+        vec![
+          ("src/helpers.ts", "helperUnused"),
+          ("src/utils.ts", "localUnused"),
+        ],
+      );
+    }
+
+    #[test]
+    fn path_alias_without_extension() {
+      let mut aliases = HashMap::new();
+      aliases.insert("@components".to_string(), "src/components".to_string());
+      let config = SweepyConfig { alias: aliases };
+
+      let project = TestProject::new()
+        .add_file("index.ts", "import { Button } from '@components/Button';")
+        .add_file(
+          "src/components/Button.tsx",
+          "export const Button = () => {};\nexport const Icon = () => {};",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build_with_config(Some(config));
+
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "src/components/Button.tsx"],
+      );
+      assert_unused(&analyzer, vec![("src/components/Button.tsx", "Icon")]);
     }
   }
 
