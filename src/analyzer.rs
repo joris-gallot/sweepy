@@ -450,809 +450,456 @@ pub fn resolve_relative_import_from_set(
 
 #[cfg(test)]
 mod tests {
-  use super::super::analyzer::ProjectAnalyzer;
+  use super::*;
   use std::collections::HashMap;
   use std::path::PathBuf;
 
-  fn exports_named() -> &'static str {
-    r#"
-      export const foo = 'foo'
-      export function bar() { return 'bar' }
-      export class Baz { greet() { return 'Hello from Baz' } }
-      export interface MyInterface { id: number; name: string }
-      export type MyType = { value: string }
-      export enum MyEnum { FIRST, SECOND, THIRD }
-      export namespace MyNamespace { export function sayHello() { return 'Hello from MyNamespace' } }
-      export const myArrowFunction = (x: number): number => x * x
-      export async function myAsyncFunction(): Promise<string> { return 'This is an async function' }
-      export function* myGeneratorFunction() { yield 1; yield 2; yield 3 }
-      export const myTuple: [number, string] = [1, 'one']
-      export const myUnionType: number | string = 'union'
-      export const myIntersectionType: { a: number } & { b: string } = { a: 1, b: 'two' }
-      export function myOverloadedFunction(x: number): number
-      export function myOverloadedFunction(x: string): string
-      export function myOverloadedFunction(x: number | string): number | string {
-          if (typeof x === 'number') { return x * 2 } else { return x + x }
+  /// Test project builder for creating in-memory test projects
+  struct TestProject {
+    sources: HashMap<PathBuf, String>,
+    entries: Vec<PathBuf>,
+  }
+
+  impl TestProject {
+    fn new() -> Self {
+      Self {
+        sources: HashMap::new(),
+        entries: Vec::new(),
       }
-      export abstract class MyAbstractClass { abstract getName(): string }
-      export declare function myDeclaredFunction(param: string): void
-      export const myConstEnum = { A: 1, B: 2, C: 3 } as const
-    "#
+    }
+
+    fn add_file(mut self, path: &str, content: &str) -> Self {
+      self
+        .sources
+        .insert(PathBuf::from(path), content.to_string());
+      self
+    }
+
+    fn entry(mut self, path: &str) -> Self {
+      self.entries.push(PathBuf::from(path));
+      self
+    }
+
+    fn build(self) -> (ProjectAnalyzer, Vec<PathBuf>) {
+      let sources_ref: HashMap<PathBuf, &str> = self
+        .sources
+        .iter()
+        .map(|(p, c)| (p.clone(), c.as_str()))
+        .collect();
+
+      let analyzer = ProjectAnalyzer::from_sources(&sources_ref).expect("Failed to build analyzer");
+
+      (analyzer, self.entries)
+    }
   }
 
-  #[test]
-  fn test_unused_exports_named() {
-    let mut sources = HashMap::new();
-
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        console.log("Hello World");
-      "#,
-    );
-
-    sources.insert(
-      PathBuf::from("./path-to-exports/exports-named.ts"),
-      exports_named(),
-    );
-
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
-
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
-
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(!reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
-
-    let unused_exports = analyzer.find_unused_exports();
-    assert_eq!(
-      unused_exports,
-      vec![
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "Baz".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyEnum".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyInterface".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyNamespace".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyType".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "bar".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "foo".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myConstEnum".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myTuple".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myUnionType".to_string()
-        ),
-      ]
-    );
+  fn assert_reachable(analyzer: &ProjectAnalyzer, entries: &[PathBuf], expected: &[&str]) {
+    let reachable = analyzer.compute_reachable(entries.to_vec());
+    for path in expected {
+      assert!(
+        reachable.contains(&PathBuf::from(path)),
+        "Expected {} to be reachable",
+        path
+      );
+    }
   }
 
-  #[test]
-  fn test_import_exports_named() {
-    let mut sources = HashMap::new();
-
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import { foo, bar, type MyInterface } from "./path-to-exports/exports-named";
-        import type { MyType } from "./path-to-exports/exports-named";
-        console.log("Hello World");
-      "#,
-    );
-
-    sources.insert(
-      PathBuf::from("./path-to-exports/exports-named.ts"),
-      exports_named(),
-    );
-
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
-
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
-
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
-
-    let unused_exports = analyzer.find_unused_exports();
-    assert_eq!(
-      unused_exports,
-      vec![
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "Baz".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyEnum".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "MyNamespace".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myConstEnum".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myTuple".to_string()
-        ),
-        (
-          PathBuf::from("path-to-exports/exports-named.ts"),
-          "myUnionType".to_string()
-        ),
-      ]
-    );
+  fn assert_unused(analyzer: &ProjectAnalyzer, expected: Vec<(&str, &str)>) {
+    let mut unused = analyzer.find_unused_exports();
+    let mut expected_sorted: Vec<_> = expected
+      .into_iter()
+      .map(|(file, name)| (PathBuf::from(file), name.to_string()))
+      .collect();
+    expected_sorted.sort();
+    unused.sort();
+    assert_eq!(unused, expected_sorted);
   }
 
-  #[test]
-  fn test_import_all_exports_named() {
-    let mut sources = HashMap::new();
+  // ===== Basic Named Exports =====
+  mod basic {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import * as exportsNamed from "./path-to-exports/exports-named";
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn named_exports_all_unused() {
+      let project = TestProject::new()
+        .add_file("index.ts", "console.log('entry');")
+        .add_file(
+          "utils.ts",
+          "export const foo = 1;\nexport function bar() {}",
+        )
+        .entry("index.ts");
 
-    sources.insert(
-      PathBuf::from("./path-to-exports/exports-named.ts"),
-      exports_named(),
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+      assert_reachable(&analyzer, &entries, &["index.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "bar"), ("utils.ts", "foo")]);
+    }
 
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
+    #[test]
+    fn named_exports_some_used() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from './utils';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
 
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("path-to-exports/exports-named.ts")));
+      let (analyzer, entries) = project.build();
 
-    let unused_exports = analyzer.find_unused_exports();
-    assert_eq!(unused_exports, vec![]);
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "bar")]);
+    }
+
+    #[test]
+    fn named_exports_all_used() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo, bar } from './utils';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![]);
+    }
+
+    #[test]
+    fn type_only_imports() {
+      let project = TestProject::new()
+        .add_file(
+          "index.ts",
+          "import type { MyType } from './types'; import { foo } from './types';",
+        )
+        .add_file(
+          "types.ts",
+          "export type MyType = string;\nexport const foo = 1;\nexport const bar = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "types.ts"]);
+      assert_unused(&analyzer, vec![("types.ts", "bar")]);
+    }
   }
 
-  #[test]
-  fn test_import_all_exports_all() {
-    let mut sources = HashMap::new();
+  // ===== Default Exports =====
+  mod default_exports {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import * as all from "./exports-all";
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn default_export_unused() {
+      let project = TestProject::new()
+        .add_file("index.ts", "console.log('entry');")
+        .add_file("utils.ts", "export default function foo() {}")
+        .entry("index.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./exports-all.ts"),
-      r#"
-        export * from './exports-named'
-        export const extra = 'extra'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+      assert_reachable(&analyzer, &entries, &["index.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "default")]);
+    }
 
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
+    #[test]
+    fn default_export_used() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import foo from './utils';")
+        .add_file("utils.ts", "export default function foo() {}")
+        .entry("index.ts");
 
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
+      let (analyzer, entries) = project.build();
 
-    let unused_exports = analyzer.find_unused_exports();
-    assert_eq!(unused_exports, vec![]);
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![]);
+    }
+
+    #[test]
+    fn mixed_default_and_named() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import foo, { bar } from './utils';")
+        .add_file(
+          "utils.ts",
+          "export default function foo() {}\nexport const bar = 1;\nexport const baz = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "baz")]);
+    }
   }
 
-  #[test]
-  fn test_import_some_exports_all() {
-    let mut sources = HashMap::new();
+  // ===== Namespace Imports =====
+  mod namespace {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import { foo, extra } from "./exports-all";
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn namespace_import_marks_all_used() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import * as utils from './utils';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./exports-all.ts"),
-      r#"
-        export * from './exports-named'
-        export const extra = 'extra'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
-
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
-
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
-
-    let unused_exports = analyzer.find_unused_exports();
-    assert_eq!(
-      unused_exports,
-      vec![
-        (PathBuf::from("exports-named.ts"), "Baz".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
-        (PathBuf::from("exports-named.ts"), "bar".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
-        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
-      ]
-    );
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![]);
+    }
   }
 
-  #[test]
-  fn test_import_some_exports_some() {
-    let mut sources = HashMap::new();
+  // ===== Re-exports =====
+  mod reexports {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import { foo, extra } from "./exports-all";
-        import {
-          MyAbstractClass,
-          MyEnum,
-          MyInterface,
-          MyNamespace,
-          MyType,
-          myArrowFunction,
-          myAsyncFunction,
-          myConstEnum,
-          myDeclaredFunction,
-          myGeneratorFunction,
-          myIntersectionType,
-          myOverloadedFunction,
-          myTuple,
-          myUnionType
-        } from "./exports-named"
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn reexport_all_unused() {
+      let project = TestProject::new()
+        .add_file("index.ts", "console.log('entry');")
+        .add_file("barrel.ts", "export * from './utils';")
+        .add_file("utils.ts", "export const foo = 1;")
+        .entry("index.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./exports-all.ts"),
-      r#"
-        export { foo, bar, Baz } from "./exports-named"
-        export const extra = 'extra'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+      assert_reachable(&analyzer, &entries, &["index.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "foo")]);
+    }
 
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
+    #[test]
+    fn reexport_all_used() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from './barrel';")
+        .add_file("barrel.ts", "export * from './utils';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
 
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-all.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
+      let (analyzer, entries) = project.build();
 
-    let unused_exports = analyzer.find_unused_exports();
-    assert_eq!(
-      unused_exports,
-      vec![
-        (PathBuf::from("exports-all.ts"), "Baz".to_string()),
-        (PathBuf::from("exports-all.ts"), "bar".to_string()),
-        (PathBuf::from("exports-named.ts"), "Baz".to_string()),
-        (PathBuf::from("exports-named.ts"), "bar".to_string()),
-      ]
-    );
+      assert_reachable(&analyzer, &entries, &["index.ts", "barrel.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "bar")]);
+    }
+
+    #[test]
+    fn reexport_named() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from './barrel';")
+        .add_file("barrel.ts", "export { foo, bar } from './utils';")
+        .add_file(
+          "utils.ts",
+          "export const foo = 1;\nexport const bar = 2;\nexport const baz = 3;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "barrel.ts", "utils.ts"]);
+      assert_unused(
+        &analyzer,
+        vec![
+          ("barrel.ts", "bar"),
+          ("utils.ts", "bar"),
+          ("utils.ts", "baz"),
+        ],
+      );
+    }
+
+    #[test]
+    fn reexport_with_alias() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { myFoo } from './barrel';")
+        .add_file("barrel.ts", "export { foo as myFoo } from './utils';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "barrel.ts", "utils.ts"]);
+      // The alias export creates a new export name, so 'foo' from utils is not directly used
+      // Only 'bar' remains unused since 'myFoo' is imported (but myFoo doesn't exist in utils)
+      assert_unused(&analyzer, vec![("utils.ts", "bar"), ("utils.ts", "foo")]);
+    }
+
+    #[test]
+    fn namespace_import_via_reexport() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import * as utils from './barrel';")
+        .add_file("barrel.ts", "export * from './utils';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "barrel.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![]);
+    }
   }
 
-  #[test]
-  fn test_unused_exports_all() {
-    let mut sources = HashMap::new();
+  // ===== Path Resolution =====
+  mod path_resolution {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn deep_relative_path() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import './deep/folder/module';")
+        .add_file(
+          "deep/folder/module.ts",
+          "import { foo } from '../../utils';",
+        )
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./exports-all.ts"),
-      r#"
-        export * from './exports-named'
-        export const extra = 'extra'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+      assert_reachable(
+        &analyzer,
+        &entries,
+        &["index.ts", "deep/folder/module.ts", "utils.ts"],
+      );
+      assert_unused(&analyzer, vec![("utils.ts", "bar")]);
+    }
 
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
+    #[test]
+    fn import_with_js_extension() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from './utils.js';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
 
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(!reachable.contains(&PathBuf::from("exports-all.ts")));
-    assert!(!reachable.contains(&PathBuf::from("exports-named.ts")));
+      let (analyzer, entries) = project.build();
 
-    let unused_exports = analyzer.find_unused_exports();
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "bar")]);
+    }
 
-    assert_eq!(
-      unused_exports,
-      vec![
-        (PathBuf::from("exports-all.ts"), "extra".to_string()),
-        (PathBuf::from("exports-named.ts"), "Baz".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
-        (PathBuf::from("exports-named.ts"), "bar".to_string()),
-        (PathBuf::from("exports-named.ts"), "foo".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
-        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
-      ]
-    );
+    #[test]
+    fn index_file_resolution() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from './utils/index';")
+        .add_file(
+          "utils/index.ts",
+          "export const foo = 1;\nexport const bar = 2;",
+        )
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils/index.ts"]);
+      assert_unused(&analyzer, vec![("utils/index.ts", "bar")]);
+    }
   }
 
-  #[test]
-  fn test_some_import_with_unused_all_export() {
-    let mut sources = HashMap::new();
+  // ===== Side Effects =====
+  mod side_effects {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import { foo } from "./exports-named";';
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn side_effect_import_makes_file_reachable() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import './setup';")
+        .add_file(
+          "setup.ts",
+          "console.log('setup');\nexport const config = {};",
+        )
+        .entry("index.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./exports-all.ts"),
-      r#"
-        export * from './exports-named'
-        export const extra = 'extra'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
-
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
-
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(!reachable.contains(&PathBuf::from("exports-all.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
-
-    let unused_exports = analyzer.find_unused_exports();
-
-    assert_eq!(
-      unused_exports,
-      vec![
-        (PathBuf::from("exports-all.ts"), "extra".to_string()),
-        (PathBuf::from("exports-named.ts"), "Baz".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
-        (PathBuf::from("exports-named.ts"), "bar".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
-        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
-      ]
-    );
+      assert_reachable(&analyzer, &entries, &["index.ts", "setup.ts"]);
+      assert_unused(&analyzer, vec![("setup.ts", "config")]);
+    }
   }
 
-  #[test]
-  fn test_import_from_deep_path() {
-    let mut sources = HashMap::new();
+  // ===== Multi-entry =====
+  mod multi_entry {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import "./deep/folder/import";';
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn multiple_entrypoints() {
+      let project = TestProject::new()
+        .add_file("entry1.ts", "import { foo } from './utils';")
+        .add_file("entry2.ts", "import { bar } from './utils';")
+        .add_file(
+          "utils.ts",
+          "export const foo = 1;\nexport const bar = 2;\nexport const baz = 3;",
+        )
+        .entry("entry1.ts")
+        .entry("entry2.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./deep/folder/import.ts"),
-      r#"
-        import {foo, bar, Baz} from '../../exports-named'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
-
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
-
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("deep/folder/import.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
-
-    let unused_exports = analyzer.find_unused_exports();
-
-    assert_eq!(
-      unused_exports,
-      vec![
-        (
-          PathBuf::from("exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
-        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
-      ]
-    );
+      assert_reachable(&analyzer, &entries, &["entry1.ts", "entry2.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "baz")]);
+    }
   }
 
-  #[test]
-  fn test_import_with_extension() {
-    let mut sources = HashMap::new();
+  // ===== Import Aliases =====
+  mod aliases {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import "./deep/folder/import.js";
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn import_with_alias() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo as myFoo } from './utils';")
+        .add_file("utils.ts", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./deep/folder/import.ts"),
-      r#"
-        import {foo, bar, Baz} from '../../exports-named.js'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
-
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
-
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("deep/folder/import.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
-
-    let unused_exports = analyzer.find_unused_exports();
-
-    assert_eq!(
-      unused_exports,
-      vec![
-        (
-          PathBuf::from("exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
-        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
-      ]
-    );
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.ts"]);
+      assert_unused(&analyzer, vec![("utils.ts", "bar")]);
+    }
   }
 
-  #[test]
-  fn test_import_with_multiple_extension() {
-    let mut sources = HashMap::new();
+  // ===== Mixed Extensions =====
+  mod mixed_extensions {
+    use super::*;
 
-    sources.insert(
-      PathBuf::from("./index.ts"),
-      r#"
-        import "./exports-named.js";
-        console.log("Hello World");
-      "#,
-    );
+    #[test]
+    fn js_and_ts_files() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from './utils.js';")
+        .add_file("utils.js", "export const foo = 1;\nexport const bar = 2;")
+        .entry("index.ts");
 
-    sources.insert(PathBuf::from("exports-named.ts"), exports_named());
-    sources.insert(
-      PathBuf::from("./deep/folder/import.spec.ts"),
-      r#"
-        import {foo, bar, Baz} from '../../exports-named.js'
-      "#,
-    );
+      let (analyzer, entries) = project.build();
 
-    let sources_ref: HashMap<PathBuf, &str> =
-      sources.iter().map(|(p, c)| (p.clone(), *c)).collect();
+      assert_reachable(&analyzer, &entries, &["index.ts", "utils.js"]);
+      assert_unused(&analyzer, vec![("utils.js", "bar")]);
+    }
 
-    let analyzer = ProjectAnalyzer::from_sources(&sources_ref).unwrap();
-    let entrypoints = vec![PathBuf::from("./index.ts")];
-    let reachable = analyzer.compute_reachable(entrypoints);
+    #[test]
+    fn jsx_file() {
+      let project = TestProject::new()
+        .add_file("index.tsx", "import { Component } from './component.jsx';")
+        .add_file(
+          "component.jsx",
+          "export const Component = () => {};\nexport const Other = () => {};",
+        )
+        .entry("index.tsx");
 
-    assert!(reachable.contains(&PathBuf::from("index.ts")));
-    assert!(reachable.contains(&PathBuf::from("exports-named.ts")));
+      let (analyzer, entries) = project.build();
 
-    let unused_exports = analyzer.find_unused_exports();
+      assert_reachable(&analyzer, &entries, &["index.tsx", "component.jsx"]);
+      assert_unused(&analyzer, vec![("component.jsx", "Other")]);
+    }
+  }
 
-    assert_eq!(
-      unused_exports,
-      vec![
-        (
-          PathBuf::from("exports-named.ts"),
-          "MyAbstractClass".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "MyEnum".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyInterface".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyNamespace".to_string()),
-        (PathBuf::from("exports-named.ts"), "MyType".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myArrowFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myAsyncFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myConstEnum".to_string()),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myDeclaredFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myGeneratorFunction".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myIntersectionType".to_string()
-        ),
-        (
-          PathBuf::from("exports-named.ts"),
-          "myOverloadedFunction".to_string()
-        ),
-        (PathBuf::from("exports-named.ts"), "myTuple".to_string()),
-        (PathBuf::from("exports-named.ts"), "myUnionType".to_string()),
-      ]
-    );
+  // ===== Circular Dependencies =====
+  mod circular {
+    use super::*;
+
+    #[test]
+    fn circular_imports() {
+      let project = TestProject::new()
+        .add_file("index.ts", "import { foo } from './a';")
+        .add_file("a.ts", "import { bar } from './b';\nexport const foo = 1;")
+        .add_file("b.ts", "import { foo } from './a';\nexport const bar = 2;")
+        .entry("index.ts");
+
+      let (analyzer, entries) = project.build();
+
+      assert_reachable(&analyzer, &entries, &["index.ts", "a.ts", "b.ts"]);
+      assert_unused(&analyzer, vec![]);
+    }
   }
 }
