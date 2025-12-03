@@ -5,11 +5,13 @@ import { writeFile, glob, mkdtemp, readFile, mkdir } from 'node:fs/promises'
 import os from 'node:os'
 import { testCases } from './cases'
 
+const SUPPORTED_EXTENSIONS = ['ts', 'tsx', 'js', 'jsx', 'vue']
+
 async function prepareTsProject({ name, indexContent }: { name: string; indexContent: string }) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'sweepy-'))
   const tsProject = path.resolve(import.meta.dirname, 'fixtures', name)
 
-  const files = await Array.fromAsync(glob('**/*.{js,ts,jsx,tsx,vue}', { cwd: tsProject }))
+  const files = await Array.fromAsync(glob(`**/*.{${SUPPORTED_EXTENSIONS}}`, { cwd: tsProject }))
 
   await Promise.all(
     files.map(async (file) => {

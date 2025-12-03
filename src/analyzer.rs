@@ -8,6 +8,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use vue_oxc_parser::parser::VueOxcParser;
 
+/// Supported file extensions for source files
+pub const SUPPORTED_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "vue"];
+
 #[derive(Debug, Clone)]
 pub struct ImportInfo {
   pub source: String,          // module specifier as written: "./foo"
@@ -484,9 +487,7 @@ pub fn resolve_relative_import_from_set(
     candidate
   };
 
-  const CANDIDATE_EXTS: &[&str] = &[".ts", ".tsx", ".js", ".jsx", ".vue"];
-
-  for ext in CANDIDATE_EXTS {
+  for ext in SUPPORTED_EXTENSIONS {
     let with_extension = candidate.with_extension(ext.trim_start_matches('.'));
 
     if file_set.contains(&with_extension) {
