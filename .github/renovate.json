@@ -7,6 +7,11 @@
       "matchPackageNames": ["@napi/cli", "napi", "napi-build", "napi-derive"],
       "addLabels": ["napi-rs"],
       "groupName": "napi-rs"
+    },
+    {
+      "matchPackageNames": ["oxc_allocator", "oxc_parser", "oxc_span", "oxc_ast", "vue-oxc-parser"],
+      "addLabels": ["oxc"],
+      "groupName": "oxc"
     }
   ],
   "commitMessagePrefix": "chore: ",
