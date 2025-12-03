@@ -2,7 +2,7 @@
   <div>Hello from Component</div>
 </template>
 
-<script setup>
+<script setup lang="ts">
 export const useCounter = () => {
   const count = 1;
   return { count };
